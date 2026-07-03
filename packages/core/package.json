@@ -1,0 +1,26 @@
+{
+  "name": "@meridian/core",
+  "version": "0.1.0",
+  "description": "MERIDIAN core engines — TRACE, FIELD, GRAVITY",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^13.1.0"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  }
+}
