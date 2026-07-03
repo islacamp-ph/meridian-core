@@ -1,7 +1,7 @@
 import { Command } from 'commander';
-import { analyze } from '@meridian/core';
-import type { AnalyzeResponse, Network } from '@meridian/core';
-import { synthesizeBrief, generateFallbackBrief } from '@meridian/ai';
+import { analyze } from '../internal/meridian-core.js';
+import type { AnalyzeResponse, Network } from '../internal/meridian-core.js';
+import { synthesizeBrief, generateFallbackBrief } from '../internal/meridian-ai.js';
 import { resolveTxInput } from '../lib/input.js';
 import { loadManifest } from '../lib/manifest.js';
 import { failWithError, failWithMeridianError, isMeridianError } from '../lib/errors.js';

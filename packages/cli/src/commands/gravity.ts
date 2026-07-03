@@ -1,6 +1,6 @@
 import { Command } from 'commander';
-import { buildFieldGraph, scoreGravity, trace } from '@meridian/core';
-import type { Network } from '@meridian/core';
+import { buildFieldGraph, scoreGravity, trace } from '../internal/meridian-core.js';
+import type { Network } from '../internal/meridian-core.js';
 import { resolveTxInput } from '../lib/input.js';
 import { loadManifest } from '../lib/manifest.js';
 import { failWithError, failWithMeridianError, isMeridianError } from '../lib/errors.js';

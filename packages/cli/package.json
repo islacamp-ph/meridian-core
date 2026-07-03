@@ -1,34 +1,33 @@
 {
   "name": "meridian-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MERIDIAN command-line interface — pre-execution intelligence from your terminal",
   "type": "module",
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "bin": {
     "meridian": "dist/index.js",
     "meridian-core": "dist/index.js"
   },
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "build": "tsc && chmod +x dist/index.js",
+    "build": "tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js --alias:@meridian/core=./src/internal/meridian-core.ts --alias:@meridian/ai=./src/internal/meridian-ai.ts --external:commander --external:picocolors --external:@stellar/stellar-sdk --external:@anthropic-ai/sdk && chmod +x dist/index.js",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@meridian/ai": "0.1.0",
-    "@meridian/core": "0.1.0",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@stellar/stellar-sdk": "^13.1.0",
     "commander": "^13.0.0",
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
+    "@meridian/ai": "0.1.0",
+    "@meridian/core": "0.1.0",
+    "esbuild": "^0.28.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^4.1.9"

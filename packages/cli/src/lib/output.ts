@@ -5,7 +5,7 @@ import type {
   GravityResult,
   TraceResult,
   Verdict,
-} from '@meridian/core';
+} from '../internal/meridian-core.js';
 
 /**
  * Print any value as pretty-printed JSON.

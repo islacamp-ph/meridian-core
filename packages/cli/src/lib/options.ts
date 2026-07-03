@@ -1,5 +1,5 @@
 import { Command, InvalidArgumentError } from 'commander';
-import type { Network } from '@meridian/core';
+import type { Network } from '../internal/meridian-core.js';
 
 /**
  * Parse and validate a --network option value.

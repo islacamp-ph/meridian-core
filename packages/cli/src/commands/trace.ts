@@ -1,10 +1,10 @@
 import { Command } from 'commander';
-import { trace } from '@meridian/core';
+import { trace } from '../internal/meridian-core.js';
 import { resolveTxInput } from '../lib/input.js';
 import { failWithError, failWithMeridianError, isMeridianError } from '../lib/errors.js';
 import { printJson, printTrace } from '../lib/output.js';
 import { withCommonOptions } from '../lib/options.js';
-import type { Network } from '@meridian/core';
+import type { Network } from '../internal/meridian-core.js';
 
 interface TraceCommandOptions {
   network: Network;

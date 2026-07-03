@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { MERIDIAN_VERSION } from '@meridian/core';
+import { MERIDIAN_VERSION } from '../internal/meridian-core.js';
 import { printJson } from '../lib/output.js';
 
 /**

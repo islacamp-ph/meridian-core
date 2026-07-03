@@ -1,5 +1,5 @@
 import pc from 'picocolors';
-import type { MeridianError } from '@meridian/core';
+import type { MeridianError } from '../internal/meridian-core.js';
 
 /**
  * Check if a value is a structured MeridianError.

@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import type { EcosystemManifest } from '@meridian/core';
+import type { EcosystemManifest } from '../internal/meridian-core.js';
 
 /**
  * Load and parse an ecosystem manifest JSON file.
