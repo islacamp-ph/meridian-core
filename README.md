@@ -31,7 +31,7 @@ npm test
 npm run dev --workspace=@meridian/api
 
 # Or use the CLI directly
-npm run build --workspace=@meridian/cli
+npm run build --workspace=meridian-core
 node packages/cli/dist/index.js analyze <base64-xdr> --network testnet
 ```
 
@@ -49,7 +49,7 @@ curl -X POST http://localhost:3000/v1/analyze \
 
 ## CLI
 
-`@meridian/cli` exposes the same TRACE + FIELD + GRAVITY + BRIEF pipeline as a `meridian` binary.
+`meridian-core` (package name) exposes the same TRACE + FIELD + GRAVITY + BRIEF pipeline as a `meridian` / `meridian-core` binary.
 
 ```bash
 # Full analysis (default command)
@@ -73,8 +73,15 @@ Options include `--network`, `--rpc-url` (override RPC endpoint without env vars
 To install the `meridian` command globally from this monorepo:
 
 ```bash
-npm run build --workspace=@meridian/cli
-npm link --workspace=@meridian/cli
+npm run build --workspace=meridian-core
+npm link --workspace=meridian-core
+```
+
+Or install it globally like any other npm package once it's published:
+
+```bash
+npm install -g meridian-core
+meridian-core --help
 ```
 
 ## Monorepo Structure
