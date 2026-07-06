@@ -53,6 +53,9 @@ describe('analyze', () => {
     const response = result as Omit<AnalyzeResponse, 'brief'>;
     expect(response.meta.ledger_sequence).toBe(321);
     expect(response.meta.simulation_stale).toBe(true);
+    expect(response.meta.layer_timings_ms.trace).toBeGreaterThanOrEqual(0);
+    expect(response.meta.unmapped_contracts).toBe(2);
+    expect(response.meta.confidence_bucket).toBe('MEDIUM');
     expect(response.field.dependency_graph.map((node) => node.address).sort()).toEqual(
       ['CEXECUTION', 'CFOOTPRINT'],
     );

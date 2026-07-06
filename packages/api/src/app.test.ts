@@ -6,6 +6,12 @@ vi.mock('@meridian/core', () => ({
   trace: vi.fn(),
   buildFieldGraph: vi.fn(),
   scoreGravity: vi.fn(),
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
   MERIDIAN_VERSION: 'test-version',
 }));
 
@@ -34,6 +40,13 @@ function makeAnalysisResult() {
       fee_estimate: { classic_base_fee: 100, min_resource_fee: 0, total_fee: 100 },
       resource_usage: { cpu_instructions: 0, memory_bytes: 0, read_bytes: 0, write_bytes: 0 },
       simulation_context: { ledgerSequence: 5, latestLedger: 6, footprintContracts: ['CPAY'], readOnly: [], readWrite: [] },
+      rpc_metrics: {
+        simulate_transaction_ms: 8,
+        get_latest_ledger_ms: 2,
+        latest_ledger_fallback: false,
+        latest_ledger_timed_out: false,
+        timeout_ms: 30000,
+      },
       staleness_warning: false,
     },
     field: {
@@ -77,6 +90,9 @@ function makeAnalysisResult() {
       simulation_stale: false,
       network: 'testnet' as const,
       processing_ms: 10,
+      layer_timings_ms: { trace: 3, field: 2, gravity: 1 },
+      unmapped_contracts: 0,
+      confidence_bucket: 'MEDIUM' as const,
     },
   };
 }
@@ -142,6 +158,7 @@ describe('POST /v1/analyze', () => {
     expect(body.brief).toBe('brief text');
     expect(body.explainability).toBeDefined();
     expect(body.gravity.score_breakdown.formula).toContain('sum(contract_scores)');
+    expect(body.meta.layer_timings_ms.brief).toBeDefined();
   });
 
   it('falls back to deterministic brief text when BRIEF synthesis errors', async () => {
@@ -165,6 +182,16 @@ describe('POST /v1/analyze', () => {
     const body = await res.json();
     expect(body.brief).toBe('fallback brief');
     expect(body.warnings).toContain('BRIEF synthesis failed');
+  });
+});
+
+describe('GET /v1/metrics', () => {
+  it('returns an observability snapshot', async () => {
+    const res = await app.request('/v1/metrics');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.requests_total).toBeDefined();
+    expect(body.confidence_distribution).toBeDefined();
   });
 });
 
@@ -200,6 +227,17 @@ describe('POST /v1/analyze/batch', () => {
       body: JSON.stringify({ items: [{ tx: 'AAAA' }] }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for invalid network values', async () => {
+    const res = await app.request('/v1/analyze/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ default_network: 'invalid', items: [{ tx: 'AAAA' }] }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.details[0]).toContain('default_network');
   });
 
   it('returns a batch summary on the happy path', async () => {

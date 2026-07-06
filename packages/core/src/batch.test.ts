@@ -86,6 +86,9 @@ function makeStructuredResult(
       simulation_stale: false,
       network: 'testnet',
       processing_ms: 1,
+      layer_timings_ms: { trace: 1, field: 0, gravity: 0 },
+      unmapped_contracts: 0,
+      confidence_bucket: 'MEDIUM',
     },
     ...overrides,
   };

@@ -213,6 +213,12 @@ export function printAnalysis(response: AnalyzeResponse): void {
   field('ledger_sequence', response.meta.ledger_sequence);
   field('simulation_stale', response.meta.simulation_stale);
   field('processing_ms', response.meta.processing_ms);
+  field(
+    'layer_timings_ms',
+    `trace=${response.meta.layer_timings_ms.trace} field=${response.meta.layer_timings_ms.field} gravity=${response.meta.layer_timings_ms.gravity}${response.meta.layer_timings_ms.brief !== undefined ? ` brief=${response.meta.layer_timings_ms.brief}` : ''}`,
+  );
+  field('unmapped_contracts', response.meta.unmapped_contracts);
+  field('confidence_bucket', response.meta.confidence_bucket);
   console.log('');
 }
 
