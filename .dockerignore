@@ -1,0 +1,14 @@
+.git
+.github
+.turbo
+node_modules
+packages/*/node_modules
+packages/*/dist
+coverage
+packages/*/coverage
+*.tsbuildinfo
+**/*.test.ts
+*.log
+.env
+.env.*
+.DS_Store
