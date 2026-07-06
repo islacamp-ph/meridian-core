@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseExecutionPath, parseFailurePoint } from './parser.js';
+import { parseExecutionPath, parseFailurePoint, parseSimulationResult } from './parser.js';
 import { computeVerdict, computeConfidence } from '../analyze.js';
 import type { ExecutionStep } from '../types.js';
 
@@ -43,6 +43,42 @@ describe('parseFailurePoint', () => {
   it('defaults to SIMULATION_FAILED for unknown errors', () => {
     const fp = parseFailurePoint('unknown contract error', executionPath);
     expect(fp.error_code).toBe('SIMULATION_FAILED');
+  });
+});
+
+describe('parseSimulationResult', () => {
+  it('preserves real simulation and latest ledger metadata', () => {
+    const result = parseSimulationResult(
+      {
+        success: true,
+        latestLedger: 120,
+        simulationLedger: 113,
+        minResourceFee: '42',
+        events: [],
+      },
+      'not-valid-xdr',
+    );
+
+    expect(result.simulation_context.ledgerSequence).toBe(113);
+    expect(result.simulation_context.latestLedger).toBe(120);
+    expect(result.staleness_warning).toBe(true);
+  });
+
+  it('does not flag fresh simulations as stale', () => {
+    const result = parseSimulationResult(
+      {
+        success: false,
+        latestLedger: 120,
+        simulationLedger: 116,
+        minResourceFee: '0',
+        events: [],
+        error: 'simulation failed',
+      },
+      'not-valid-xdr',
+    );
+
+    expect(result.simulation_context.ledgerSequence).toBe(116);
+    expect(result.staleness_warning).toBe(false);
   });
 });
 

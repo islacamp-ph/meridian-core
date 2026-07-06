@@ -66,8 +66,8 @@ function countWords(text: string): number {
  * @returns Truncated text
  */
 function truncateToWordLimit(text: string, maxWords: number): string {
-  const words = text.trim().split(/\s+/);
-  if (words.length <= maxWords) return text;
+  if (countWords(text) <= maxWords) return text;
+  const words = text.trim().split(/\s+/).filter(Boolean);
   return words.slice(0, maxWords).join(' ') + '…';
 }
 
