@@ -51,6 +51,27 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
+async function getLatestLedgerSequence(
+  server: rpc.Server,
+  timeoutMs: number,
+  fallbackLedger: number,
+): Promise<number> {
+  try {
+    const latestLedgerResponse = await withTimeout(
+      server.getLatestLedger(),
+      timeoutMs,
+      'getLatestLedger',
+    );
+    return latestLedgerResponse.sequence;
+  } catch (err) {
+    logger.warn('simulateTransaction:getLatestLedger:failed', {
+      error: err instanceof Error ? err.message : String(err),
+      fallbackLedger,
+    });
+    return fallbackLedger;
+  }
+}
+
 /**
  * Call Stellar simulateTransaction RPC with timeout and error classification.
  *
@@ -69,12 +90,6 @@ export async function simulateTransaction(
   try {
     logger.debug('simulateTransaction:start', { rpcUrl });
 
-    const latestLedgerResponse = await withTimeout(
-      server.getLatestLedger(),
-      timeoutMs,
-      'getLatestLedger',
-    );
-
     const transaction = TransactionBuilder.fromXDR(
       txXdr,
       Networks.TESTNET, // network passphrase resolved during parse; RPC validates
@@ -87,20 +102,26 @@ export async function simulateTransaction(
     );
 
     if (rpc.Api.isSimulationError(simResponse)) {
+      const simulationLedger = simResponse.latestLedger;
+      const latestLedger = await getLatestLedgerSequence(server, timeoutMs, simulationLedger);
+
       return {
         success: false,
-        latestLedger: latestLedgerResponse.sequence,
-        simulationLedger: latestLedgerResponse.sequence,
+        latestLedger,
+        simulationLedger,
         minResourceFee: '0',
-        events: simResponse.events,
+        events: simResponse.events ?? [],
         error: simResponse.error,
       };
     }
 
+    const simulationLedger = simResponse.latestLedger;
+    const latestLedger = await getLatestLedgerSequence(server, timeoutMs, simulationLedger);
+
     return {
       success: true,
-      latestLedger: latestLedgerResponse.sequence,
-      simulationLedger: latestLedgerResponse.sequence,
+      latestLedger,
+      simulationLedger,
       minResourceFee: simResponse.minResourceFee,
       events: simResponse.events ?? [],
       sorobanData: simResponse.transactionData,

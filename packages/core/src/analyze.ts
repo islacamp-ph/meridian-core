@@ -145,11 +145,13 @@ export async function analyze(
   }
 
   const context: SimulationContext = {
-    ledgerSequence: 0,
-    latestLedger: 0,
-    footprintContracts: extractFootprintContracts(traceResult),
-    readOnly: [],
-    readWrite: [],
+    ...traceResult.simulation_context,
+    footprintContracts: [
+      ...new Set([
+        ...traceResult.simulation_context.footprintContracts,
+        ...extractFootprintContracts(traceResult),
+      ]),
+    ],
   };
 
   const fieldResult = request.options?.skip_field

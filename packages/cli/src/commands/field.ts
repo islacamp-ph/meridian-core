@@ -39,17 +39,10 @@ export function fieldCommand(): Command {
         failWithMeridianError(traceResult);
       }
 
-      const fieldResult = buildFieldGraph(
-        traceResult,
-        {
-          ledgerSequence: 0,
-          latestLedger: 0,
-          footprintContracts: [],
-          readOnly: [],
-          readWrite: [],
-        },
-        { network: options.network, manifest },
-      );
+      const fieldResult = buildFieldGraph(traceResult, traceResult.simulation_context, {
+        network: options.network,
+        manifest,
+      });
 
       if (options.json) {
         printJson(fieldResult);

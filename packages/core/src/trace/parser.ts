@@ -28,15 +28,19 @@ const TTL_WARNING_THRESHOLD = 100_000;
  * @param sorobanData - Parsed Soroban resource/footprint data from a successful simulation
  * @returns Footprint contract addresses and ledger keys
  */
-export function extractFootprint(sorobanData?: SorobanDataBuilder): SimulationContext {
+export function extractFootprint(
+  sorobanData?: SorobanDataBuilder,
+  ledgerSequence: number = 0,
+  latestLedger: number = ledgerSequence,
+): SimulationContext {
   const footprintContracts = new Set<string>();
   const readOnly: string[] = [];
   const readWrite: string[] = [];
 
   if (!sorobanData) {
     return {
-      ledgerSequence: 0,
-      latestLedger: 0,
+      ledgerSequence,
+      latestLedger,
       footprintContracts: [],
       readOnly: [],
       readWrite: [],
@@ -56,8 +60,8 @@ export function extractFootprint(sorobanData?: SorobanDataBuilder): SimulationCo
   }
 
   return {
-    ledgerSequence: 0,
-    latestLedger: 0,
+    ledgerSequence,
+    latestLedger,
     footprintContracts: [...footprintContracts],
     readOnly,
     readWrite,
@@ -329,6 +333,11 @@ export function parseFailurePoint(error: string, executionPath: ExecutionStep[])
  */
 export function parseSimulationResult(raw: RawSimulationResult, txXdr: string): TraceResult {
   const executionPath = parseExecutionPath(txXdr);
+  const simulationContext = extractFootprint(
+    raw.sorobanData,
+    raw.simulationLedger,
+    raw.latestLedger,
+  );
   const stalenessDelta = raw.latestLedger - raw.simulationLedger;
   const isStale = stalenessDelta > STALENESS_THRESHOLD;
 
@@ -340,6 +349,7 @@ export function parseSimulationResult(raw: RawSimulationResult, txXdr: string): 
       auth_entries: parseAuthEntries(raw.events),
       fee_estimate: computeFeeEstimate(txXdr, raw.minResourceFee),
       resource_usage: extractResourceUsage(raw.sorobanData),
+      simulation_context: simulationContext,
       staleness_warning: isStale,
     };
   }
@@ -350,6 +360,7 @@ export function parseSimulationResult(raw: RawSimulationResult, txXdr: string): 
     auth_entries: parseAuthEntries(raw.events),
     fee_estimate: computeFeeEstimate(txXdr, raw.minResourceFee),
     resource_usage: extractResourceUsage(raw.sorobanData),
+    simulation_context: simulationContext,
     staleness_warning: isStale,
   };
 }
