@@ -1,7 +1,7 @@
 import { rpc, SorobanDataBuilder, TransactionBuilder, Networks, xdr } from '@stellar/stellar-sdk';
 import { classifyStellarError } from '../errors.js';
 import { logger } from '../logger.js';
-import type { MeridianError } from '../types.js';
+import type { MeridianError, RpcMetrics } from '../types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -11,6 +11,7 @@ export interface RawSimulationResult {
   simulationLedger: number;
   minResourceFee: string;
   events: xdr.DiagnosticEvent[];
+  rpcMetrics: RpcMetrics;
   error?: string;
   /** Parsed Soroban resource/footprint data, present only on a successful simulation. */
   sorobanData?: SorobanDataBuilder;
@@ -55,20 +56,35 @@ async function getLatestLedgerSequence(
   server: rpc.Server,
   timeoutMs: number,
   fallbackLedger: number,
-): Promise<number> {
+): Promise<{ sequence: number; elapsedMs: number; usedFallback: boolean; timedOut: boolean }> {
+  const startedAt = Date.now();
   try {
     const latestLedgerResponse = await withTimeout(
       server.getLatestLedger(),
       timeoutMs,
       'getLatestLedger',
     );
-    return latestLedgerResponse.sequence;
+    return {
+      sequence: latestLedgerResponse.sequence,
+      elapsedMs: Date.now() - startedAt,
+      usedFallback: false,
+      timedOut: false,
+    };
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const timedOut = message.includes('timeout:');
     logger.warn('simulateTransaction:getLatestLedger:failed', {
-      error: err instanceof Error ? err.message : String(err),
+      error: message,
       fallbackLedger,
+      timedOut,
+      elapsedMs: Date.now() - startedAt,
     });
-    return fallbackLedger;
+    return {
+      sequence: fallbackLedger,
+      elapsedMs: Date.now() - startedAt,
+      usedFallback: true,
+      timedOut,
+    };
   }
 }
 
@@ -95,35 +111,65 @@ export async function simulateTransaction(
       Networks.TESTNET, // network passphrase resolved during parse; RPC validates
     );
 
+    const simulateStartedAt = Date.now();
     const simResponse = await withTimeout(
       server.simulateTransaction(transaction),
       timeoutMs,
       'simulateTransaction',
     );
+    const simulateTransactionMs = Date.now() - simulateStartedAt;
 
     if (rpc.Api.isSimulationError(simResponse)) {
       const simulationLedger = simResponse.latestLedger;
       const latestLedger = await getLatestLedgerSequence(server, timeoutMs, simulationLedger);
+      const rpcMetrics: RpcMetrics = {
+        simulate_transaction_ms: simulateTransactionMs,
+        get_latest_ledger_ms: latestLedger.elapsedMs,
+        latest_ledger_fallback: latestLedger.usedFallback,
+        latest_ledger_timed_out: latestLedger.timedOut,
+        timeout_ms: timeoutMs,
+      };
+
+      logger.info('simulateTransaction:complete', {
+        rpcUrl,
+        success: false,
+        ...rpcMetrics,
+      });
 
       return {
         success: false,
-        latestLedger,
+        latestLedger: latestLedger.sequence,
         simulationLedger,
         minResourceFee: '0',
         events: simResponse.events ?? [],
+        rpcMetrics,
         error: simResponse.error,
       };
     }
 
     const simulationLedger = simResponse.latestLedger;
     const latestLedger = await getLatestLedgerSequence(server, timeoutMs, simulationLedger);
+    const rpcMetrics: RpcMetrics = {
+      simulate_transaction_ms: simulateTransactionMs,
+      get_latest_ledger_ms: latestLedger.elapsedMs,
+      latest_ledger_fallback: latestLedger.usedFallback,
+      latest_ledger_timed_out: latestLedger.timedOut,
+      timeout_ms: timeoutMs,
+    };
+
+    logger.info('simulateTransaction:complete', {
+      rpcUrl,
+      success: true,
+      ...rpcMetrics,
+    });
 
     return {
       success: true,
-      latestLedger,
+      latestLedger: latestLedger.sequence,
       simulationLedger,
       minResourceFee: simResponse.minResourceFee,
       events: simResponse.events ?? [],
+      rpcMetrics,
       sorobanData: simResponse.transactionData,
     };
   } catch (err) {

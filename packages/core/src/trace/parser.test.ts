@@ -55,6 +55,13 @@ describe('parseSimulationResult', () => {
         simulationLedger: 113,
         minResourceFee: '42',
         events: [],
+        rpcMetrics: {
+          simulate_transaction_ms: 5,
+          get_latest_ledger_ms: 2,
+          latest_ledger_fallback: false,
+          latest_ledger_timed_out: false,
+          timeout_ms: 30000,
+        },
       },
       'not-valid-xdr',
     );
@@ -72,6 +79,13 @@ describe('parseSimulationResult', () => {
         simulationLedger: 116,
         minResourceFee: '0',
         events: [],
+        rpcMetrics: {
+          simulate_transaction_ms: 5,
+          get_latest_ledger_ms: 2,
+          latest_ledger_fallback: false,
+          latest_ledger_timed_out: false,
+          timeout_ms: 30000,
+        },
         error: 'simulation failed',
       },
       'not-valid-xdr',
