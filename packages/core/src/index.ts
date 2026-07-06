@@ -1,5 +1,7 @@
 export { MERIDIAN_VERSION, analyze, computeVerdict, computeConfidence, generateFixSequence } from './analyze.js';
+export { analyzeBatch, computeRiskScore, summarizeBatch } from './batch.js';
 export { classifyStellarError, createMeridianError } from './errors.js';
+export { buildExplainabilityReport } from './explainability.js';
 export { buildFieldGraph } from './field/index.js';
 export { scoreGravity } from './gravity/index.js';
 export { logger, Logger } from './logger.js';

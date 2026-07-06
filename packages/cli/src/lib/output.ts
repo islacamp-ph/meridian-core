@@ -1,6 +1,7 @@
 import pc from 'picocolors';
 import type {
   AnalyzeResponse,
+  BatchAnalyzeResponse,
   FieldResult,
   GravityResult,
   TraceResult,
@@ -63,6 +64,8 @@ function field(label: string, value: unknown): void {
 export function printTrace(trace: TraceResult): void {
   section('TRACE');
   field('success', trace.success ? pc.green('true') : pc.red('false'));
+  field('simulation_ledger', trace.simulation_context.ledgerSequence);
+  field('latest_ledger', trace.simulation_context.latestLedger);
   if (trace.staleness_warning) {
     field('staleness_warning', pc.yellow('true'));
   }
@@ -151,6 +154,35 @@ export function printAnalysis(response: AnalyzeResponse): void {
   printField(response.field);
   printGravity(response.gravity);
 
+  section('EXPLAINABILITY');
+  field('operations', response.explainability.operations.length);
+  field('contracts', response.explainability.contracts.length);
+  console.log(`  ${pc.dim('operations')}:`);
+  for (const operation of response.explainability.operations) {
+    const touched = operation.touched_contracts.length > 0
+      ? operation.touched_contracts
+          .map((contract) => {
+            const impact = contract.impact ? ` [${contract.impact}]` : '';
+            const sources = contract.sources.length > 0 ? ` {${contract.sources.join(', ')}}` : '';
+            return `${contract.address}${impact}${sources}`;
+          })
+          .join(', ')
+      : 'none';
+    console.log(`    - step ${operation.index} ${operation.type}: ${operation.description} -> ${touched}`);
+  }
+  console.log(`  ${pc.dim('contracts')}:`);
+  for (const contract of response.explainability.contracts) {
+    const label = contract.name ? `${contract.name} (${contract.address})` : contract.address;
+    const impact = contract.impact ? ` [${contract.impact}]` : '';
+    const reason = contract.impact_reason ? ` — ${contract.impact_reason}` : '';
+    console.log(`    - ${label}${impact} sources={${contract.sources.join(', ') || 'none'}} ops=[${contract.touched_by_operations.join(', ')}]${reason}`);
+  }
+  console.log(`  ${pc.dim('blast_radius')}: ${response.explainability.blast_radius.formula}`);
+  for (const contribution of response.explainability.blast_radius.contributions) {
+    const label = contribution.name ? `${contribution.name} (${contribution.address})` : contribution.address;
+    console.log(`    - ${label} [${contribution.impact}] weight=${contribution.weight} — ${contribution.reason}`);
+  }
+
   if (response.fix_sequence && response.fix_sequence.length > 0) {
     section('FIX SEQUENCE');
     for (const step of response.fix_sequence) {
@@ -176,5 +208,55 @@ export function printAnalysis(response: AnalyzeResponse): void {
   field('ledger_sequence', response.meta.ledger_sequence);
   field('simulation_stale', response.meta.simulation_stale);
   field('processing_ms', response.meta.processing_ms);
+  console.log('');
+}
+
+export function printBatchAnalysis(response: BatchAnalyzeResponse): void {
+  console.log('');
+  console.log(`${pc.bold('MERIDIAN')} v${response.version}  ${pc.bgMagenta(pc.white(' BATCH '))}`);
+
+  section('SUMMARY');
+  field('total', response.summary.total);
+  field('ok', response.summary.ok);
+  field('errors', response.summary.errors);
+  field('clear', response.summary.clear);
+  field('warn', response.summary.warn);
+  field('abort', response.summary.abort);
+  field('stale', response.summary.stale);
+  field('average_confidence', response.summary.average_confidence);
+
+  if (response.summary.highest_risk_transaction) {
+    const highestRisk = response.summary.highest_risk_transaction;
+    section('HIGHEST RISK');
+    field('id', highestRisk.id);
+    field('network', highestRisk.network);
+    field('status', highestRisk.status);
+    field('risk_score', highestRisk.risk_score);
+    if (highestRisk.verdict) field('verdict', highestRisk.verdict);
+    if (highestRisk.blast_radius !== undefined) field('blast_radius', highestRisk.blast_radius);
+    if (highestRisk.error_code) field('error_code', highestRisk.error_code);
+  }
+
+  if (response.summary.common_failure_patterns.length > 0) {
+    section('COMMON FAILURE PATTERNS');
+    for (const pattern of response.summary.common_failure_patterns) {
+      console.log(
+        `  - ${pattern.error_code} (${pattern.count}) — ${pattern.root_cause} ${pc.dim(`[${pattern.item_ids.join(', ')}]`)}`,
+      );
+    }
+  }
+
+  section('ITEMS');
+  for (const item of response.items) {
+    if (item.status === 'error') {
+      console.log(`  - ${pc.red(item.id)} [ERROR] risk=${item.risk_score} network=${item.network} code=${item.error?.code}`);
+      continue;
+    }
+
+    console.log(
+      `  - ${pc.bold(item.id)} [${item.result?.verdict}] risk=${item.risk_score} network=${item.network} confidence=${item.result?.confidence} blast=${item.result?.gravity.blast_radius}`,
+    );
+  }
+
   console.log('');
 }

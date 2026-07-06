@@ -1,13 +1,33 @@
 import { Hono } from 'hono';
-import { analyze, MERIDIAN_VERSION, trace, buildFieldGraph, scoreGravity } from '@meridian/core';
+import {
+  analyze,
+  analyzeBatch,
+  MERIDIAN_VERSION,
+  trace,
+  buildFieldGraph,
+  scoreGravity,
+} from '@meridian/core';
 import { synthesizeBrief } from '@meridian/ai';
-import type { AnalyzeRequest, MeridianError } from '@meridian/core';
+import type { AnalyzeRequest, BatchAnalyzeItemRequest, MeridianError, Network } from '@meridian/core';
 
 type Env = {
   Variables: {
     requestId: string;
   };
 };
+
+interface BatchAnalyzeRequestBody {
+  items: Array<{
+    id?: string;
+    tx: string;
+    network?: Network;
+    ecosystem?: AnalyzeRequest['ecosystem'];
+    options?: AnalyzeRequest['options'];
+  }>;
+  default_network?: Network;
+  ecosystem?: AnalyzeRequest['ecosystem'];
+  options?: AnalyzeRequest['options'];
+}
 
 const app = new Hono<Env>();
 
@@ -25,6 +45,15 @@ function isMeridianError(value: unknown): value is MeridianError {
     'code' in value &&
     'hint' in value
   );
+}
+
+function invalidRequest(message: string, hint: string) {
+  return {
+    error: message,
+    code: 'INVALID_REQUEST',
+    hint,
+    layer: 'TRACE',
+  } satisfies MeridianError;
 }
 
 app.use('*', async (c, next) => {
@@ -55,24 +84,17 @@ app.post('/v1/analyze', async (c) => {
     body = await c.req.json<AnalyzeRequest>();
   } catch {
     return c.json(
-      {
-        error: 'Invalid JSON request body',
-        code: 'INVALID_REQUEST',
-        hint: 'Send a JSON body with tx (base64 XDR) and network fields',
-        layer: 'TRACE',
-      } satisfies MeridianError,
+      invalidRequest('Invalid JSON request body', 'Send a JSON body with tx (base64 XDR) and network fields'),
       400,
     );
   }
 
   if (!body.tx || !body.network) {
     return c.json(
-      {
-        error: 'Missing required fields: tx and network',
-        code: 'INVALID_REQUEST',
-        hint: 'Provide tx (base64 XDR string) and network (mainnet | testnet)',
-        layer: 'TRACE',
-      } satisfies MeridianError,
+      invalidRequest(
+        'Missing required fields: tx and network',
+        'Provide tx (base64 XDR string) and network (mainnet | testnet)',
+      ),
       400,
     );
   }
@@ -94,19 +116,25 @@ app.post('/v1/analyze', async (c) => {
   });
 
   if (isMeridianError(brief)) {
-  const fallbackBrief = await synthesizeBrief({
-    verdict: analysis.verdict,
-    confidence: analysis.confidence,
-    trace: analysis.trace,
-    field: analysis.field,
-    gravity: analysis.gravity,
-    fix_sequence: analysis.fix_sequence,
-    warnings: analysis.warnings,
-  }, { apiKey: undefined });
+    const fallbackBrief = await synthesizeBrief(
+      {
+        verdict: analysis.verdict,
+        confidence: analysis.confidence,
+        trace: analysis.trace,
+        field: analysis.field,
+        gravity: analysis.gravity,
+        fix_sequence: analysis.fix_sequence,
+        warnings: analysis.warnings,
+      },
+      { apiKey: undefined },
+    );
 
     return c.json({
       ...analysis,
-      brief: typeof fallbackBrief === 'string' ? fallbackBrief : 'Analysis complete. Review structured layer outputs.',
+      brief:
+        typeof fallbackBrief === 'string'
+          ? fallbackBrief
+          : 'Analysis complete. Review structured layer outputs.',
       warnings: [...(analysis.warnings ?? []), brief.error],
     });
   }
@@ -115,20 +143,62 @@ app.post('/v1/analyze', async (c) => {
 });
 
 /**
+ * POST /v1/analyze/batch — batch TRACE + FIELD + GRAVITY analysis
+ */
+app.post('/v1/analyze/batch', async (c) => {
+  let body: BatchAnalyzeRequestBody;
+  try {
+    body = await c.req.json<BatchAnalyzeRequestBody>();
+  } catch {
+    return c.json(
+      invalidRequest('Invalid JSON request body', 'Send a JSON body with a non-empty items array.'),
+      400,
+    );
+  }
+
+  if (!Array.isArray(body.items) || body.items.length === 0) {
+    return c.json(
+      invalidRequest('Missing required field: items', 'Provide a non-empty items array.'),
+      400,
+    );
+  }
+
+  const requests: BatchAnalyzeItemRequest[] = [];
+  for (const [index, item] of body.items.entries()) {
+    const network = item.network ?? body.default_network;
+    if (!item.tx || !network) {
+      return c.json(
+        invalidRequest(
+          `Invalid batch item at index ${index}`,
+          'Each item must include tx and either item.network or default_network.',
+        ),
+        400,
+      );
+    }
+
+    requests.push({
+      id: item.id,
+      tx: item.tx,
+      network,
+      ecosystem: item.ecosystem ?? body.ecosystem,
+      options: {
+        ...body.options,
+        ...item.options,
+      },
+    });
+  }
+
+  const result = await analyzeBatch(requests);
+  return c.json(result);
+});
+
+/**
  * POST /v1/trace — TRACE only, fast path
  */
 app.post('/v1/trace', async (c) => {
   const body = await c.req.json<{ tx: string; network: 'mainnet' | 'testnet' }>();
   if (!body.tx || !body.network) {
-    return c.json(
-      {
-        error: 'Missing required fields: tx and network',
-        code: 'INVALID_REQUEST',
-        hint: 'Provide tx and network',
-        layer: 'TRACE',
-      } satisfies MeridianError,
-      400,
-    );
+    return c.json(invalidRequest('Missing required fields: tx and network', 'Provide tx and network'), 400);
   }
 
   const result = await trace(body.tx, { network: body.network });

@@ -1,11 +1,11 @@
 import { Command } from 'commander';
-import { analyze } from '../internal/meridian-core.js';
-import type { AnalyzeResponse, Network } from '../internal/meridian-core.js';
+import { analyze, analyzeBatch } from '../internal/meridian-core.js';
+import type { AnalyzeResponse, BatchAnalyzeResponse, Network } from '../internal/meridian-core.js';
 import { synthesizeBrief, generateFallbackBrief } from '../internal/meridian-ai.js';
-import { resolveTxInput } from '../lib/input.js';
+import { resolveAnalyzeInput } from '../lib/input.js';
 import { loadManifest } from '../lib/manifest.js';
 import { failWithError, failWithMeridianError, isMeridianError } from '../lib/errors.js';
-import { printAnalysis, printJson } from '../lib/output.js';
+import { printAnalysis, printBatchAnalysis, printJson } from '../lib/output.js';
 import { parseThreshold, withCommonOptions } from '../lib/options.js';
 
 interface AnalyzeCommandOptions {
@@ -39,11 +39,36 @@ export function analyzeCommand(): Command {
     .option('--api-key <key>', 'Anthropic API key for BRIEF synthesis (else read from env)')
     .action(async (tx: string | undefined, options: AnalyzeCommandOptions) => {
       try {
-        const txXdr = await resolveTxInput(tx, options.file);
+        const input = await resolveAnalyzeInput(tx, options.file, options.network);
         const ecosystem = await loadManifest(options.ecosystem);
 
+        if (input.kind === 'batch') {
+          const batchResult = await analyzeBatch(
+            input.items.map((item) => ({
+              ...item,
+              ecosystem,
+              options: {
+                skip_field: options.skipField,
+                skip_gravity: options.skipGravity,
+                confidence_threshold: options.confidenceThreshold,
+                rpc_url: options.rpcUrl,
+              },
+            })),
+          );
+
+          const response: BatchAnalyzeResponse = batchResult;
+
+          if (options.json) {
+            printJson(response);
+            return;
+          }
+
+          printBatchAnalysis(response);
+          return;
+        }
+
         const result = await analyze({
-          tx: txXdr,
+          tx: input.tx,
           network: options.network,
           ecosystem,
           options: {
