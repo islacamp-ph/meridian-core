@@ -25,28 +25,23 @@ export function buildFieldGraph(
   logger.info('field:start', { contracts: context.footprintContracts.length });
 
   const manifest = options?.manifest;
-  const contracts = new Set<string>(context.footprintContracts);
-
-  for (const step of trace.execution_path) {
-    if (step.contract_id) contracts.add(step.contract_id);
-  }
-
-  const dependencyGraph: DependencyNode[] = [];
   const manifestLookup = buildManifestLookup(manifest);
+  const observedContracts = collectObservedContracts(trace, context);
+  const contractDepths = buildContractDepths(observedContracts, manifestLookup);
 
-  for (const address of contracts) {
-    const manifestEntry = manifestLookup.get(address);
-    const dependencies = manifestEntry?.dependencies ?? [];
-
-    dependencyGraph.push({
-      address,
-      name: manifestEntry?.name,
-      dependencies,
-      depth: dependencies.length > 0 ? 1 : 0,
+  const dependencyGraph: DependencyNode[] = [...contractDepths.entries()]
+    .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+    .map(([address, depth]) => {
+      const manifestEntry = manifestLookup.get(address);
+      return {
+        address,
+        name: manifestEntry?.name,
+        dependencies: manifestEntry?.dependencies ?? [],
+        depth,
+      };
     });
-  }
 
-  const manifestCoverage = computeManifestCoverage(contracts, manifest);
+  const manifestCoverage = computeManifestCoverage(observedContracts, manifest);
 
   return {
     contracts_mapped: dependencyGraph.length,
@@ -95,4 +90,41 @@ function computeManifestCoverage(
     if (manifestAddresses.has(addr)) covered++;
   }
   return covered / contracts.size;
+}
+
+function collectObservedContracts(trace: TraceResult, context: SimulationContext): Set<string> {
+  const contracts = new Set<string>(context.footprintContracts);
+  for (const step of trace.execution_path) {
+    if (step.contract_id) contracts.add(step.contract_id);
+  }
+  return contracts;
+}
+
+function buildContractDepths(
+  observedContracts: Set<string>,
+  manifestLookup: Map<string, { name: string; dependencies?: string[] }>,
+): Map<string, number> {
+  const depths = new Map<string, number>();
+  const queue: Array<{ address: string; depth: number }> = [...observedContracts].map((address) => ({
+    address,
+    depth: 0,
+  }));
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+
+    const existingDepth = depths.get(current.address);
+    if (existingDepth !== undefined && existingDepth <= current.depth) {
+      continue;
+    }
+
+    depths.set(current.address, current.depth);
+    const dependencies = manifestLookup.get(current.address)?.dependencies ?? [];
+    for (const dependency of dependencies) {
+      queue.push({ address: dependency, depth: current.depth + 1 });
+    }
+  }
+
+  return depths;
 }

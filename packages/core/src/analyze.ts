@@ -246,6 +246,13 @@ function emptyFieldResult() {
 function emptyGravityResult() {
   return {
     blast_radius: 0,
+    score_breakdown: {
+      formula: 'blast_radius = sum(contract_scores) / total_contracts, capped at 100',
+      total_contracts: 0,
+      total_weighted_score: 0,
+      normalized_score: 0,
+      contributions: [],
+    },
     affected_contracts: [],
     critical: [],
     warning: [],

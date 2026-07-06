@@ -127,6 +127,8 @@ export function printGravity(result: GravityResult): void {
   field('blast_radius', result.blast_radius);
   field('total_affected_users', result.total_affected_users);
   field('recovery', result.recovery);
+  field('score_formula', result.score_breakdown.formula);
+  field('weighted_score', result.score_breakdown.total_weighted_score);
   if (result.critical.length > 0) field('critical', pc.red(result.critical.join(', ')));
   if (result.warning.length > 0) field('warning', pc.yellow(result.warning.join(', ')));
   if (result.monitor.length > 0) field('monitor', pc.blue(result.monitor.join(', ')));
@@ -180,7 +182,10 @@ export function printAnalysis(response: AnalyzeResponse): void {
   console.log(`  ${pc.dim('blast_radius')}: ${response.explainability.blast_radius.formula}`);
   for (const contribution of response.explainability.blast_radius.contributions) {
     const label = contribution.name ? `${contribution.name} (${contribution.address})` : contribution.address;
-    console.log(`    - ${label} [${contribution.impact}] weight=${contribution.weight} — ${contribution.reason}`);
+    const factors = contribution.factors.map((factor) => `${factor.key}=${factor.weight}`).join(', ');
+    console.log(
+      `    - ${label} [${contribution.impact}] score=${contribution.contract_score} contribution=${contribution.normalized_contribution} — ${contribution.reason}${factors ? ` {${factors}}` : ''}`,
+    );
   }
 
   if (response.fix_sequence && response.fix_sequence.length > 0) {

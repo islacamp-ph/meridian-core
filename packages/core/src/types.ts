@@ -117,6 +117,7 @@ export interface TTLWarning {
 
 export interface GravityResult {
   blast_radius: number;
+  score_breakdown: GravityScoreBreakdown;
   affected_contracts: ContractImpact[];
   critical: string[];
   warning: string[];
@@ -131,7 +132,51 @@ export interface ContractImpact {
   name?: string;
   impact: ImpactLevel;
   active_users?: number;
+  score: number;
   reason: string;
+  score_breakdown: GravityContractScoreBreakdown;
+}
+
+export interface GravityFactor {
+  key:
+    | 'direct_failure_point'
+    | 'direct_touch'
+    | 'write_access'
+    | 'read_access'
+    | 'auth_critical_path'
+    | 'manifest_criticality'
+    | 'active_users'
+    | 'direct_dependency'
+    | 'transitive_dependency'
+    | 'contract_role';
+  label: string;
+  weight: number;
+  applied: boolean;
+  reason: string;
+}
+
+export interface GravityContractScoreBreakdown {
+  total: number;
+  factors: GravityFactor[];
+}
+
+export interface GravityScoreContribution {
+  address: string;
+  name?: string;
+  impact: ImpactLevel;
+  contract_score: number;
+  normalized_contribution: number;
+  reason: string;
+  active_users?: number;
+  factors: GravityFactor[];
+}
+
+export interface GravityScoreBreakdown {
+  formula: string;
+  total_contracts: number;
+  total_weighted_score: number;
+  normalized_score: number;
+  contributions: GravityScoreContribution[];
 }
 
 export type ExplainabilityContractSource = 'execution_path' | 'footprint' | 'manifest';
@@ -175,12 +220,8 @@ export interface ExplainabilityContractNode {
 
 export interface BlastRadiusExplanation {
   formula: string;
-  critical_weight: number;
-  warning_weight: number;
   total_contracts: number;
-  critical_count: number;
-  warning_count: number;
-  raw_score: number;
+  total_weighted_score: number;
   normalized_score: number;
   contributions: BlastRadiusContribution[];
 }
@@ -189,9 +230,11 @@ export interface BlastRadiusContribution {
   address: string;
   name?: string;
   impact: ImpactLevel;
-  weight: number;
+  contract_score: number;
+  normalized_contribution: number;
   reason: string;
   active_users?: number;
+  factors: GravityFactor[];
 }
 
 export interface FixStep {
@@ -215,6 +258,7 @@ export interface ManifestContract {
   dependencies?: string[];
   active_users?: number;
   criticality?: Criticality;
+  role?: string;
 }
 
 export interface ResponseMeta {
