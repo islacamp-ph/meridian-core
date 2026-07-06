@@ -22,6 +22,7 @@ MERIDIAN sits between a developer's code and the Stellar network. Before any tra
   - [Examples](#examples)
   - [Ecosystem Manifest](#ecosystem-manifest)
 - [REST API](#rest-api)
+- [Docker](#docker)
 - [Environment Variables](#environment-variables)
 - [Monorepo Structure](#monorepo-structure)
 - [Development](#development)
@@ -203,6 +204,25 @@ curl -X POST http://localhost:3000/v1/analyze \
   -H "Content-Type: application/json" \
   -d '{"tx": "<base64-xdr>", "network": "testnet"}'
 ```
+
+## Docker
+
+Build and run the API server in a container from the repo root:
+
+```bash
+docker build -t meridian-api .
+
+docker run --rm -p 3000:3000 \
+  -e STELLAR_RPC_TESTNET=https://soroban-testnet.stellar.org \
+  -e STELLAR_RPC_MAINNET=https://mainnet.sorobanrpc.com \
+  -e ANTHROPIC_API_KEY=your-key-if-needed \
+  meridian-api
+```
+
+The image uses a multi-stage build:
+- builds `@meridian/core`, `@meridian/ai`, and `@meridian/api`
+- starts `packages/api/dist/index.js`
+- excludes local caches, test files, and other unnecessary artifacts via `.dockerignore`
 
 ## Environment Variables
 
