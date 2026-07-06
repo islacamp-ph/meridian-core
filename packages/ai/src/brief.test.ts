@@ -1,5 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import { generateFallbackBrief } from './brief.js';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+
+const createMessageMock = vi.fn();
+
+vi.mock('@anthropic-ai/sdk', () => ({
+  default: class MockAnthropic {
+    messages = {
+      create: createMessageMock,
+    };
+  },
+}));
+
+import { generateFallbackBrief, synthesizeBrief } from './brief.js';
 import type { BriefInput } from './brief.js';
 
 const baseInput: BriefInput = {
@@ -35,6 +46,13 @@ const baseInput: BriefInput = {
   },
   gravity: {
     blast_radius: 40,
+    score_breakdown: {
+      formula: 'blast_radius = sum(contract_scores) / total_contracts, capped at 100',
+      total_contracts: 1,
+      total_weighted_score: 40,
+      normalized_score: 40,
+      contributions: [],
+    },
     affected_contracts: [],
     critical: ['CCONTRACT123'],
     warning: [],
@@ -55,6 +73,11 @@ const baseInput: BriefInput = {
 };
 
 describe('generateFallbackBrief', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createMessageMock.mockReset();
+    delete process.env.ANTHROPIC_API_KEY;
+  });
   it('includes verdict and confidence', () => {
     const brief = generateFallbackBrief(baseInput);
     expect(brief).toContain('ABORT');
@@ -86,5 +109,20 @@ describe('generateFallbackBrief', () => {
     const brief = generateFallbackBrief(baseInput);
     const wordCount = brief.split(/\s+/).length;
     expect(wordCount).toBeLessThanOrEqual(300);
+  });
+
+  it('uses deterministic fallback when no API key is configured', async () => {
+    const brief = await synthesizeBrief(baseInput);
+    expect(typeof brief).toBe('string');
+    expect(brief).toContain('ABORT');
+  });
+
+  it('returns a BRIEF error when the API call fails', async () => {
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    createMessageMock.mockRejectedValue(new Error('upstream failed'));
+
+    const result = await synthesizeBrief(baseInput, { apiKey: 'test-key' });
+    expect(typeof result).toBe('object');
+    expect(result).toMatchObject({ code: 'BRIEF_API_ERROR', layer: 'BRIEF' });
   });
 });
