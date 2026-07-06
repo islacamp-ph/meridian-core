@@ -1,7 +1,6 @@
 import type {
   BlastRadiusContribution,
   BlastRadiusExplanation,
-  ContractImpact,
   EcosystemManifest,
   ExplainabilityContractNode,
   ExplainabilityContractSource,
@@ -9,12 +8,8 @@ import type {
   ExplainabilityReport,
   FieldResult,
   GravityResult,
-  ImpactLevel,
   TraceResult,
 } from './types.js';
-
-const CRITICAL_WEIGHT = 40;
-const WARNING_WEIGHT = 15;
 
 export function buildExplainabilityReport(
   trace: TraceResult,
@@ -84,7 +79,7 @@ export function buildExplainabilityReport(
   return {
     operations,
     contracts,
-    blast_radius: buildBlastRadiusExplanation(field.contracts_mapped, gravity.affected_contracts, gravity),
+    blast_radius: buildBlastRadiusExplanation(gravity),
   };
 }
 
@@ -101,45 +96,23 @@ function collectSources(
   return sources;
 }
 
-function buildBlastRadiusExplanation(
-  totalContracts: number,
-  affectedContracts: ContractImpact[],
-  gravity: GravityResult,
-): BlastRadiusExplanation {
-  const contributions: BlastRadiusContribution[] = affectedContracts
-    .filter((contract) => contract.impact === 'CRITICAL' || contract.impact === 'WARNING')
-    .map((contract) => ({
-      address: contract.address,
-      name: contract.name,
-      impact: contract.impact,
-      weight: impactWeight(contract.impact),
-      reason: contract.reason,
-      active_users: contract.active_users,
-    }));
-
-  const weightedTotal = contributions.reduce((sum, contract) => sum + contract.weight, 0);
-  const rawScore = totalContracts === 0 ? 0 : weightedTotal / totalContracts;
+function buildBlastRadiusExplanation(gravity: GravityResult): BlastRadiusExplanation {
+  const contributions: BlastRadiusContribution[] = gravity.score_breakdown.contributions.map((contribution) => ({
+    address: contribution.address,
+    name: contribution.name,
+    impact: contribution.impact,
+    contract_score: contribution.contract_score,
+    normalized_contribution: contribution.normalized_contribution,
+    reason: contribution.reason,
+    active_users: contribution.active_users,
+    factors: contribution.factors,
+  }));
 
   return {
-    formula: '((critical_count * 40) + (warning_count * 15)) / total_contracts',
-    critical_weight: CRITICAL_WEIGHT,
-    warning_weight: WARNING_WEIGHT,
-    total_contracts: totalContracts,
-    critical_count: gravity.critical.length,
-    warning_count: gravity.warning.length,
-    raw_score: Math.round(rawScore * 100) / 100,
-    normalized_score: gravity.blast_radius,
+    formula: gravity.score_breakdown.formula,
+    total_contracts: gravity.score_breakdown.total_contracts,
+    total_weighted_score: gravity.score_breakdown.total_weighted_score,
+    normalized_score: gravity.score_breakdown.normalized_score,
     contributions,
   };
-}
-
-function impactWeight(impact: ImpactLevel): number {
-  switch (impact) {
-    case 'CRITICAL':
-      return CRITICAL_WEIGHT;
-    case 'WARNING':
-      return WARNING_WEIGHT;
-    default:
-      return 0;
-  }
 }
