@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { buildExplainabilityReport } from './explainability.js';
 import { buildFieldGraph } from './field/index.js';
 import { scoreGravity } from './gravity/index.js';
 import { logger } from './logger.js';
@@ -191,6 +192,13 @@ export async function analyze(
     traceResult.failure_point?.root_cause,
   );
 
+  const explainability = buildExplainabilityReport(
+    traceResult,
+    fieldResult,
+    gravityResult,
+    request.ecosystem,
+  );
+
   return {
     product: 'MERIDIAN',
     version: MERIDIAN_VERSION,
@@ -199,6 +207,7 @@ export async function analyze(
     trace: traceResult,
     field: fieldResult,
     gravity: gravityResult,
+    explainability,
     fix_sequence: fixSequence,
     warnings: warnings.length > 0 ? warnings : undefined,
     meta: {
