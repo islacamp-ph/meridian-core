@@ -19,6 +19,13 @@ const baseInput: BriefInput = {
     auth_entries: [],
     fee_estimate: { classic_base_fee: 100, min_resource_fee: 0, total_fee: 100 },
     resource_usage: { cpu_instructions: 0, memory_bytes: 0, read_bytes: 0, write_bytes: 0 },
+    simulation_context: {
+      ledgerSequence: 123,
+      latestLedger: 123,
+      footprintContracts: ['CCONTRACT123'],
+      readOnly: [],
+      readWrite: [],
+    },
   },
   field: {
     contracts_mapped: 1,

@@ -50,6 +50,7 @@ export interface TraceResult {
   auth_entries: AuthEntry[];
   fee_estimate: FeeEstimate;
   resource_usage: ResourceUsage;
+  simulation_context: SimulationContext;
   staleness_warning?: boolean;
 }
 

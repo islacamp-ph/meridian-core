@@ -149,11 +149,10 @@ app.post('/v1/field', async (c) => {
   const traceResult = await trace(body.tx, { network: body.network });
   if (isMeridianError(traceResult)) return c.json(traceResult, 502);
 
-  const fieldResult = buildFieldGraph(
-    traceResult,
-    { ledgerSequence: 0, latestLedger: 0, footprintContracts: [], readOnly: [], readWrite: [] },
-    { network: body.network, manifest: body.ecosystem },
-  );
+  const fieldResult = buildFieldGraph(traceResult, traceResult.simulation_context, {
+    network: body.network,
+    manifest: body.ecosystem,
+  });
 
   return c.json(fieldResult);
 });
@@ -171,11 +170,10 @@ app.post('/v1/gravity', async (c) => {
   const traceResult = await trace(body.tx, { network: body.network });
   if (isMeridianError(traceResult)) return c.json(traceResult, 502);
 
-  const fieldResult = buildFieldGraph(
-    traceResult,
-    { ledgerSequence: 0, latestLedger: 0, footprintContracts: [], readOnly: [], readWrite: [] },
-    { network: body.network, manifest: body.ecosystem },
-  );
+  const fieldResult = buildFieldGraph(traceResult, traceResult.simulation_context, {
+    network: body.network,
+    manifest: body.ecosystem,
+  });
 
   const gravityResult = scoreGravity(traceResult, fieldResult, { manifest: body.ecosystem });
   return c.json(gravityResult);
