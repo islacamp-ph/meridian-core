@@ -1,4 +1,12 @@
-import { rpc, TransactionBuilder, FeeBumpTransaction, Operation } from '@stellar/stellar-sdk';
+import {
+  Address,
+  FeeBumpTransaction,
+  Operation,
+  TransactionBuilder,
+  humanizeEvents,
+  xdr,
+  type SorobanDataBuilder,
+} from '@stellar/stellar-sdk';
 import type {
   AuthEntry,
   ExecutionStep,
@@ -17,15 +25,15 @@ const TTL_WARNING_THRESHOLD = 100_000;
 /**
  * Extract contract addresses from simulation footprint.
  *
- * @param simData - Raw simulation transaction response
+ * @param sorobanData - Parsed Soroban resource/footprint data from a successful simulation
  * @returns Footprint contract addresses and ledger keys
  */
-export function extractFootprint(simData?: rpc.Api.RawSimulateTransactionResponse): SimulationContext {
+export function extractFootprint(sorobanData?: SorobanDataBuilder): SimulationContext {
   const footprintContracts = new Set<string>();
   const readOnly: string[] = [];
   const readWrite: string[] = [];
 
-  if (!simData || !('transactionData' in simData)) {
+  if (!sorobanData) {
     return {
       ledgerSequence: 0,
       latestLedger: 0,
@@ -35,26 +43,16 @@ export function extractFootprint(simData?: rpc.Api.RawSimulateTransactionRespons
     };
   }
 
-  const txData = simData.transactionData;
-  const resources = txData?.resources;
-  const footprint = resources?.footprint;
-
-  if (footprint?.readOnly) {
-    for (const key of footprint.readOnly) {
-      const keyStr = ledgerKeyToString(key);
-      readOnly.push(keyStr);
-      const contractId = extractContractFromLedgerKey(keyStr);
-      if (contractId) footprintContracts.add(contractId);
-    }
+  for (const key of sorobanData.getReadOnly()) {
+    readOnly.push(ledgerKeyToString(key));
+    const contractId = extractContractFromLedgerKey(key);
+    if (contractId) footprintContracts.add(contractId);
   }
 
-  if (footprint?.readWrite) {
-    for (const key of footprint.readWrite) {
-      const keyStr = ledgerKeyToString(key);
-      readWrite.push(keyStr);
-      const contractId = extractContractFromLedgerKey(keyStr);
-      if (contractId) footprintContracts.add(contractId);
-    }
+  for (const key of sorobanData.getReadWrite()) {
+    readWrite.push(ledgerKeyToString(key));
+    const contractId = extractContractFromLedgerKey(key);
+    if (contractId) footprintContracts.add(contractId);
   }
 
   return {
@@ -67,29 +65,30 @@ export function extractFootprint(simData?: rpc.Api.RawSimulateTransactionRespons
 }
 
 /**
- * Convert a ledger key to a string representation.
+ * Convert a ledger key to a base64 XDR string representation.
  *
  * @param key - Ledger key from footprint
- * @returns String representation
+ * @returns Base64-encoded XDR string
  */
-function ledgerKeyToString(key: unknown): string {
-  if (typeof key === 'string') return key;
-  if (key && typeof key === 'object' && 'contractData' in (key as Record<string, unknown>)) {
-    const contractData = (key as { contractData?: { contract?: string } }).contractData;
-    return contractData?.contract ?? JSON.stringify(key);
-  }
-  return JSON.stringify(key);
+function ledgerKeyToString(key: xdr.LedgerKey): string {
+  return key.toXDR('base64');
 }
 
 /**
- * Extract contract ID from a ledger key string.
+ * Extract the contract address from a ledger key, if it is a contract data entry.
  *
- * @param keyStr - Ledger key string
- * @returns Contract address or undefined
+ * @param key - Ledger key from footprint
+ * @returns Contract address (strkey) or undefined
  */
-function extractContractFromLedgerKey(keyStr: string): string | undefined {
-  const match = keyStr.match(/C[A-Z0-9]{55}/);
-  return match?.[0];
+function extractContractFromLedgerKey(key: xdr.LedgerKey): string | undefined {
+  if (key.switch() !== xdr.LedgerEntryType.contractData()) return undefined;
+
+  try {
+    const scAddress = key.contractData().contract();
+    return Address.fromScAddress(scAddress).toString();
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -164,24 +163,24 @@ function parseOperation(op: Operation, index: number): ExecutionStep {
 }
 
 /**
- * Extract auth entries from simulation events.
+ * Extract auth entries from simulation diagnostic events.
  *
- * @param events - Simulation events
+ * @param events - Diagnostic events from simulation
  * @returns Parsed auth entries
  */
-export function parseAuthEntries(events: rpc.Api.EventResponse[]): AuthEntry[] {
+export function parseAuthEntries(events: xdr.DiagnosticEvent[]): AuthEntry[] {
   const entries: AuthEntry[] = [];
+  const humanized = humanizeEvents(events);
 
-  for (const event of events) {
-    if (event.type === 'contract' && event.topic) {
-      const topicStr = event.topic.map((t) => String(t)).join(':');
-      if (topicStr.includes('require_auth') || topicStr.includes('auth')) {
-        entries.push({
-          address: event.contractId?.() ?? 'unknown',
-          contract_id: event.contractId?.(),
-          credentials: event.topic.map((t) => String(t)),
-        });
-      }
+  for (const event of humanized) {
+    const topicStrs = event.topics.map((t) => String(t));
+    const topicStr = topicStrs.join(':');
+    if (topicStr.includes('require_auth') || topicStr.includes('auth')) {
+      entries.push({
+        address: event.contractId ?? 'unknown',
+        contract_id: event.contractId,
+        credentials: topicStrs,
+      });
     }
   }
 
@@ -220,22 +219,22 @@ export function computeFeeEstimate(txXdr: string, minResourceFee: string): FeeEs
 }
 
 /**
- * Extract resource usage from simulation response.
+ * Extract resource usage from parsed Soroban simulation data.
  *
- * @param simData - Raw simulation transaction response
+ * @param sorobanData - Parsed Soroban resource/footprint data from a successful simulation
  * @returns Resource usage metrics
  */
-export function extractResourceUsage(simData?: rpc.Api.RawSimulateTransactionResponse): ResourceUsage {
-  if (!simData || !('transactionData' in simData)) {
+export function extractResourceUsage(sorobanData?: SorobanDataBuilder): ResourceUsage {
+  if (!sorobanData) {
     return { cpu_instructions: 0, memory_bytes: 0, read_bytes: 0, write_bytes: 0 };
   }
 
-  const resources = simData.transactionData?.resources;
+  const resources = sorobanData.build().resources();
   return {
-    cpu_instructions: Number(resources?.instructions ?? 0),
+    cpu_instructions: resources.instructions(),
     memory_bytes: 0,
-    read_bytes: Number(resources?.readBytes ?? 0),
-    write_bytes: Number(resources?.writeBytes ?? 0),
+    read_bytes: resources.readBytes(),
+    write_bytes: resources.writeBytes(),
   };
 }
 
@@ -250,7 +249,7 @@ export function checkTTLWarnings(readWrite: string[], ledgerSequence: number): T
   const warnings: TTLWarning[] = [];
 
   for (const key of readWrite) {
-    const contractId = extractContractFromLedgerKey(key);
+    const contractId = extractContractFromLedgerKeyString(key);
     if (!contractId) continue;
 
     // TTL data requires ledger entry fetch; flag keys present in readWrite as monitor
@@ -268,6 +267,22 @@ export function checkTTLWarnings(readWrite: string[], ledgerSequence: number): T
 
   void ledgerSequence;
   return warnings;
+}
+
+/**
+ * Best-effort extraction of a contract address from a base64-encoded XDR ledger key string.
+ * Used for Phase 1 TTL scanning where only the string form is available.
+ *
+ * @param keyStr - Base64-encoded XDR ledger key
+ * @returns Contract address (strkey) or undefined
+ */
+function extractContractFromLedgerKeyString(keyStr: string): string | undefined {
+  try {
+    const key = xdr.LedgerKey.fromXDR(keyStr, 'base64');
+    return extractContractFromLedgerKey(key);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -314,7 +329,6 @@ export function parseFailurePoint(error: string, executionPath: ExecutionStep[])
  */
 export function parseSimulationResult(raw: RawSimulationResult, txXdr: string): TraceResult {
   const executionPath = parseExecutionPath(txXdr);
-  const footprint = extractFootprint(raw.transactionData);
   const stalenessDelta = raw.latestLedger - raw.simulationLedger;
   const isStale = stalenessDelta > STALENESS_THRESHOLD;
 
@@ -325,19 +339,17 @@ export function parseSimulationResult(raw: RawSimulationResult, txXdr: string): 
       execution_path: executionPath,
       auth_entries: parseAuthEntries(raw.events),
       fee_estimate: computeFeeEstimate(txXdr, raw.minResourceFee),
-      resource_usage: extractResourceUsage(raw.transactionData),
+      resource_usage: extractResourceUsage(raw.sorobanData),
       staleness_warning: isStale,
     };
   }
-
-  void footprint;
 
   return {
     success: true,
     execution_path: executionPath,
     auth_entries: parseAuthEntries(raw.events),
     fee_estimate: computeFeeEstimate(txXdr, raw.minResourceFee),
-    resource_usage: extractResourceUsage(raw.transactionData),
+    resource_usage: extractResourceUsage(raw.sorobanData),
     staleness_warning: isStale,
   };
 }

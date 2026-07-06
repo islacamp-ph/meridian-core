@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { buildFieldGraph } from './field/index.js';
 import { scoreGravity } from './gravity/index.js';
 import { logger } from './logger.js';
@@ -11,7 +12,25 @@ import type {
   Verdict,
 } from './types.js';
 
-export const MERIDIAN_VERSION = '0.1.0';
+// Bundlers (e.g. esbuild, used by @meridian/cli) can define this global at build
+// time to inline the real @meridian/core version, since a runtime relative-path
+// require would otherwise resolve against the bundle's own location instead of
+// this package's location. When it isn't defined (plain `tsc` build, consumed as
+// a normal npm dependency by @meridian/ai or @meridian/api), we fall back to
+// reading package.json directly at runtime.
+declare const __MERIDIAN_ENGINE_VERSION__: string | undefined;
+
+function resolveEngineVersion(): string {
+  if (typeof __MERIDIAN_ENGINE_VERSION__ !== 'undefined') {
+    return __MERIDIAN_ENGINE_VERSION__;
+  }
+  const require = createRequire(import.meta.url);
+  const { version } = require('../package.json') as { version: string };
+  return version;
+}
+
+/** MERIDIAN product/engine version, sourced from packages/core/package.json so it never drifts. */
+export const MERIDIAN_VERSION: string = resolveEngineVersion();
 
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.75;
 

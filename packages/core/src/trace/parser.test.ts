@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { parseExecutionPath, parseFailurePoint } from '../parser.js';
-import { computeVerdict, computeConfidence } from '../../analyze.js';
-import type { ExecutionStep } from '../../types.js';
+import { parseExecutionPath, parseFailurePoint } from './parser.js';
+import { computeVerdict, computeConfidence } from '../analyze.js';
+import type { ExecutionStep } from '../types.js';
 
 describe('parseExecutionPath', () => {
   it('returns a fallback step for invalid XDR', () => {

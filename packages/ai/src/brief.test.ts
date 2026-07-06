@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { generateFallbackBrief } from '../brief.js';
-import type { BriefInput } from '../brief.js';
+import { generateFallbackBrief } from './brief.js';
+import type { BriefInput } from './brief.js';
 
 const baseInput: BriefInput = {
   verdict: 'ABORT',

@@ -1,4 +1,4 @@
-import { rpc, TransactionBuilder, Networks } from '@stellar/stellar-sdk';
+import { rpc, SorobanDataBuilder, TransactionBuilder, Networks, xdr } from '@stellar/stellar-sdk';
 import { classifyStellarError } from '../errors.js';
 import { logger } from '../logger.js';
 import type { MeridianError } from '../types.js';
@@ -10,9 +10,10 @@ export interface RawSimulationResult {
   latestLedger: number;
   simulationLedger: number;
   minResourceFee: string;
-  events: rpc.Api.EventResponse[];
+  events: xdr.DiagnosticEvent[];
   error?: string;
-  transactionData?: rpc.Api.RawSimulateTransactionResponse;
+  /** Parsed Soroban resource/footprint data, present only on a successful simulation. */
+  sorobanData?: SorobanDataBuilder;
 }
 
 /**
@@ -91,21 +92,18 @@ export async function simulateTransaction(
         latestLedger: latestLedgerResponse.sequence,
         simulationLedger: latestLedgerResponse.sequence,
         minResourceFee: '0',
-        events: [],
+        events: simResponse.events,
         error: simResponse.error,
-        transactionData: simResponse,
       };
     }
-
-    const successResponse = simResponse as rpc.Api.SimulateTransactionSuccessResponse;
 
     return {
       success: true,
       latestLedger: latestLedgerResponse.sequence,
       simulationLedger: latestLedgerResponse.sequence,
-      minResourceFee: successResponse.minResourceFee,
-      events: successResponse.events ?? [],
-      transactionData: successResponse,
+      minResourceFee: simResponse.minResourceFee,
+      events: simResponse.events ?? [],
+      sorobanData: simResponse.transactionData,
     };
   } catch (err) {
     logger.error('simulateTransaction:failed', {

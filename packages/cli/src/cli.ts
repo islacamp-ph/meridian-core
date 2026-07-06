@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { MERIDIAN_VERSION } from './internal/meridian-core.js';
+import { CLI_VERSION } from './version.js';
 import { analyzeCommand } from './commands/analyze.js';
 import { traceCommand } from './commands/trace.js';
 import { fieldCommand } from './commands/field.js';
@@ -17,7 +17,7 @@ export function buildProgram(): Command {
       'MERIDIAN — pre-execution intelligence for Stellar developers.\n' +
         'Know what crosses before it does.',
     )
-    .version(MERIDIAN_VERSION, '-v, --version', 'Print the MERIDIAN version')
+    .version(CLI_VERSION, '-v, --version', 'Print the meridian-core CLI version')
     .addHelpText(
       'after',
       `
