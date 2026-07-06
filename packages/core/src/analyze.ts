@@ -7,6 +7,7 @@ import { trace } from './trace/index.js';
 import type {
   AnalyzeRequest,
   AnalyzeResponse,
+  ConfidenceBucket,
   FixStep,
   MeridianError,
   SimulationContext,
@@ -136,10 +137,12 @@ export async function analyze(
 
   logger.info('analyze:start', { network: request.network });
 
+  const traceStartedAt = Date.now();
   const traceResult = await trace(request.tx, {
     network: request.network,
     rpcUrl: request.options?.rpc_url,
   });
+  const traceMs = Date.now() - traceStartedAt;
 
   if ('layer' in traceResult) {
     return traceResult;
@@ -155,16 +158,20 @@ export async function analyze(
     ],
   };
 
+  const fieldStartedAt = Date.now();
   const fieldResult = request.options?.skip_field
     ? emptyFieldResult()
     : buildFieldGraph(traceResult, context, {
         network: request.network,
         manifest: request.ecosystem,
       });
+  const fieldMs = Date.now() - fieldStartedAt;
 
+  const gravityStartedAt = Date.now();
   const gravityResult = request.options?.skip_gravity
     ? emptyGravityResult()
     : scoreGravity(traceResult, fieldResult, { manifest: request.ecosystem });
+  const gravityMs = Date.now() - gravityStartedAt;
 
   const isStale = traceResult.staleness_warning ?? false;
   const confidence = computeConfidence(
@@ -198,6 +205,8 @@ export async function analyze(
     gravityResult,
     request.ecosystem,
   );
+  const unmappedContracts = countUnmappedContracts(fieldResult, request.ecosystem);
+  const confidenceBucket = getConfidenceBucket(confidence);
 
   return {
     product: 'MERIDIAN',
@@ -216,6 +225,13 @@ export async function analyze(
       simulation_stale: isStale,
       network: request.network,
       processing_ms: Date.now() - startMs,
+      layer_timings_ms: {
+        trace: traceMs,
+        field: fieldMs,
+        gravity: gravityMs,
+      },
+      unmapped_contracts: unmappedContracts,
+      confidence_bucket: confidenceBucket,
     },
   };
 }
@@ -232,6 +248,21 @@ function extractFootprintContracts(trace: { execution_path: { contract_id?: stri
     if (step.contract_id) contracts.add(step.contract_id);
   }
   return [...contracts];
+}
+
+function countUnmappedContracts(
+  fieldResult: { dependency_graph: { address: string }[] },
+  manifest?: AnalyzeRequest['ecosystem'],
+): number {
+  if (!manifest) return fieldResult.dependency_graph.length;
+  const knownContracts = new Set(manifest.contracts.map((contract) => contract.address));
+  return fieldResult.dependency_graph.filter((node) => !knownContracts.has(node.address)).length;
+}
+
+function getConfidenceBucket(confidence: number): ConfidenceBucket {
+  if (confidence < 0.5) return 'LOW';
+  if (confidence < 0.75) return 'MEDIUM';
+  return 'HIGH';
 }
 
 function emptyFieldResult() {

@@ -350,6 +350,7 @@ export function parseSimulationResult(raw: RawSimulationResult, txXdr: string): 
       fee_estimate: computeFeeEstimate(txXdr, raw.minResourceFee),
       resource_usage: extractResourceUsage(raw.sorobanData),
       simulation_context: simulationContext,
+      rpc_metrics: raw.rpcMetrics,
       staleness_warning: isStale,
     };
   }
@@ -361,6 +362,7 @@ export function parseSimulationResult(raw: RawSimulationResult, txXdr: string): 
     fee_estimate: computeFeeEstimate(txXdr, raw.minResourceFee),
     resource_usage: extractResourceUsage(raw.sorobanData),
     simulation_context: simulationContext,
+    rpc_metrics: raw.rpcMetrics,
     staleness_warning: isStale,
   };
 }

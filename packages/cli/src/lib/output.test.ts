@@ -105,6 +105,9 @@ function makeAnalysis(): AnalyzeResponse {
       simulation_stale: false,
       network: 'testnet',
       processing_ms: 10,
+      layer_timings_ms: { trace: 3, field: 2, gravity: 1, brief: 4 },
+      unmapped_contracts: 0,
+      confidence_bucket: 'MEDIUM',
     },
   };
 }
@@ -119,6 +122,8 @@ describe('printAnalysis', () => {
     expect(output).toContain('score_formula');
     expect(output).toContain('score=35');
     expect(output).toContain('direct_touch=20');
+    expect(output).toContain('confidence_bucket');
+    expect(output).toContain('layer_timings_ms');
   });
 });
 

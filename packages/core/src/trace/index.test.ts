@@ -34,6 +34,13 @@ describe('trace', () => {
       simulationLedger: 10,
       minResourceFee: '0',
       events: [],
+      rpcMetrics: {
+        simulate_transaction_ms: 5,
+        get_latest_ledger_ms: 2,
+        latest_ledger_fallback: false,
+        latest_ledger_timed_out: false,
+        timeout_ms: 30000,
+      },
     });
     mockedParseSimulationResult.mockReturnValue({
       success: true,
@@ -42,6 +49,13 @@ describe('trace', () => {
       fee_estimate: { classic_base_fee: 100, min_resource_fee: 0, total_fee: 100 },
       resource_usage: { cpu_instructions: 0, memory_bytes: 0, read_bytes: 0, write_bytes: 0 },
       simulation_context: { ledgerSequence: 10, latestLedger: 10, footprintContracts: [], readOnly: [], readWrite: [] },
+      rpc_metrics: {
+        simulate_transaction_ms: 5,
+        get_latest_ledger_ms: 2,
+        latest_ledger_fallback: false,
+        latest_ledger_timed_out: false,
+        timeout_ms: 30000,
+      },
     });
 
     await trace('AAAA', { network: 'mainnet' });
@@ -57,6 +71,13 @@ describe('trace', () => {
       simulationLedger: 10,
       minResourceFee: '0',
       events: [],
+      rpcMetrics: {
+        simulate_transaction_ms: 5,
+        get_latest_ledger_ms: 2,
+        latest_ledger_fallback: false,
+        latest_ledger_timed_out: false,
+        timeout_ms: 30000,
+      },
     });
     mockedParseSimulationResult.mockReturnValue({
       success: true,
@@ -65,6 +86,13 @@ describe('trace', () => {
       fee_estimate: { classic_base_fee: 100, min_resource_fee: 0, total_fee: 100 },
       resource_usage: { cpu_instructions: 0, memory_bytes: 0, read_bytes: 0, write_bytes: 0 },
       simulation_context: { ledgerSequence: 10, latestLedger: 10, footprintContracts: [], readOnly: [], readWrite: [] },
+      rpc_metrics: {
+        simulate_transaction_ms: 5,
+        get_latest_ledger_ms: 2,
+        latest_ledger_fallback: false,
+        latest_ledger_timed_out: false,
+        timeout_ms: 30000,
+      },
     });
 
     await trace('BBBB', { network: 'testnet', rpcUrl: 'https://custom.rpc' });

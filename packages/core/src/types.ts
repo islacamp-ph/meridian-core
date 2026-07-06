@@ -7,6 +7,8 @@ export type Network = 'mainnet' | 'testnet';
 
 export type Verdict = 'CLEAR' | 'WARN' | 'ABORT';
 
+export type ConfidenceBucket = 'LOW' | 'MEDIUM' | 'HIGH';
+
 export type RecoveryLevel = 'FULL' | 'PARTIAL' | 'NONE';
 
 export type Criticality = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -54,6 +56,7 @@ export interface TraceResult {
   fee_estimate: FeeEstimate;
   resource_usage: ResourceUsage;
   simulation_context: SimulationContext;
+  rpc_metrics?: RpcMetrics;
   staleness_warning?: boolean;
 }
 
@@ -261,12 +264,30 @@ export interface ManifestContract {
   role?: string;
 }
 
+export interface LayerTimingMetrics {
+  trace: number;
+  field: number;
+  gravity: number;
+  brief?: number;
+}
+
+export interface RpcMetrics {
+  simulate_transaction_ms: number;
+  get_latest_ledger_ms: number;
+  latest_ledger_fallback: boolean;
+  latest_ledger_timed_out: boolean;
+  timeout_ms: number;
+}
+
 export interface ResponseMeta {
   analyzed_at: string;
   ledger_sequence: number;
   simulation_stale: boolean;
   network: Network;
   processing_ms: number;
+  layer_timings_ms: LayerTimingMetrics;
+  unmapped_contracts: number;
+  confidence_bucket: ConfidenceBucket;
 }
 
 export interface MeridianError {
