@@ -56,5 +56,14 @@ describe('analyze', () => {
     expect(response.field.dependency_graph.map((node) => node.address).sort()).toEqual(
       ['CEXECUTION', 'CFOOTPRINT'],
     );
+    expect(response.explainability.operations).toHaveLength(1);
+    expect(response.explainability.operations[0].touched_contracts[0]).toMatchObject({
+      address: 'CEXECUTION',
+      sources: ['execution_path'],
+    });
+    expect(response.explainability.contracts.map((contract) => contract.address).sort()).toEqual(
+      ['CEXECUTION', 'CFOOTPRINT'],
+    );
+    expect(response.explainability.blast_radius.normalized_score).toBe(response.gravity.blast_radius);
   });
 });

@@ -42,3 +42,34 @@ describe('POST /v1/analyze', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('POST /v1/analyze/batch', () => {
+  it('returns 400 for invalid JSON', async () => {
+    const res = await app.request('/v1/analyze/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: 'not-json',
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for missing items', async () => {
+    const res = await app.request('/v1/analyze/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe('INVALID_REQUEST');
+  });
+
+  it('returns 400 when a batch item has no network and no default network', async () => {
+    const res = await app.request('/v1/analyze/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [{ tx: 'AAAA' }] }),
+    });
+    expect(res.status).toBe(400);
+  });
+});

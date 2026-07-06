@@ -24,6 +24,7 @@ export function buildProgram(): Command {
 Examples:
   $ meridian analyze <base64-xdr> --network testnet
   $ cat tx.xdr | meridian analyze --network mainnet --json
+  $ meridian analyze --file txs.json --network testnet
   $ meridian trace --file tx.xdr --network testnet
   $ meridian gravity <base64-xdr> --ecosystem manifest.json
 
