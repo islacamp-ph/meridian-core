@@ -5,6 +5,8 @@
 
 export type Network = 'mainnet' | 'testnet';
 
+export type SimulationAuthMode = 'enforce' | 'record' | 'record_allow_nonroot';
+
 export type Verdict = 'CLEAR' | 'WARN' | 'ABORT';
 
 export type ConfidenceBucket = 'LOW' | 'MEDIUM' | 'HIGH';
@@ -29,6 +31,12 @@ export interface AnalyzeOptions {
   skip_gravity?: boolean;
   confidence_threshold?: number;
   rpc_url?: string;
+  /** Soroban simulation auth mode for TRACE (default: enforce). */
+  auth_mode?: SimulationAuthMode;
+  /** Auth mode for FIELD deep dependency discovery (default: record). */
+  field_auth_mode?: SimulationAuthMode;
+  /** When true, FIELD uses record_allow_nonroot for deep ecosystem mapping. */
+  deep_discovery?: boolean;
 }
 
 export interface AnalyzeResponse {
@@ -104,11 +112,19 @@ export interface FieldResult {
   manifest_coverage: number;
 }
 
+export type DependencyNodeSource =
+  | 'footprint'
+  | 'execution_path'
+  | 'manifest'
+  | 'record_discovery';
+
 export interface DependencyNode {
   address: string;
   name?: string;
   dependencies: string[];
   depth: number;
+  source?: DependencyNodeSource;
+  wasm_hash?: string;
 }
 
 export interface TTLWarning {
@@ -301,11 +317,23 @@ export interface TraceOptions {
   network: Network;
   rpcUrl: string;
   timeoutMs?: number;
+  authMode?: SimulationAuthMode;
 }
 
 export interface FieldOptions {
   network: Network;
   manifest?: EcosystemManifest;
+  rpcUrl?: string;
+  timeoutMs?: number;
+  authMode?: SimulationAuthMode;
+  deepDiscovery?: boolean;
+  /** Original transaction XDR, required for record-mode dependency discovery. */
+  txXdr?: string;
+}
+
+export interface LedgerEntryTTL {
+  ledger_key: string;
+  live_until_ledger_seq?: number;
 }
 
 export interface GravityOptions {

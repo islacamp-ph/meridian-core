@@ -2,7 +2,6 @@ import {
   Address,
   FeeBumpTransaction,
   Operation,
-  TransactionBuilder,
   humanizeEvents,
   xdr,
   type SorobanDataBuilder,
@@ -12,11 +11,14 @@ import type {
   ExecutionStep,
   FailurePoint,
   FeeEstimate,
+  LedgerEntryTTL,
+  Network,
   ResourceUsage,
   SimulationContext,
   TraceResult,
   TTLWarning,
 } from '../types.js';
+import { parseTransactionFromXdr } from './network.js';
 import type { RawSimulationResult } from './rpc.js';
 
 const STALENESS_THRESHOLD = 5;
@@ -69,6 +71,33 @@ export function extractFootprint(
 }
 
 /**
+ * Merge two simulation contexts, combining footprint data from enforce and record simulations.
+ *
+ * @param primary - Primary simulation context (enforce mode)
+ * @param secondary - Secondary context (record / record_allow_nonroot mode)
+ * @returns Merged simulation context
+ */
+export function mergeSimulationContexts(
+  primary: SimulationContext,
+  secondary: SimulationContext,
+): SimulationContext {
+  const footprintContracts = [...new Set([
+    ...primary.footprintContracts,
+    ...secondary.footprintContracts,
+  ])];
+  const readOnly = [...new Set([...primary.readOnly, ...secondary.readOnly])];
+  const readWrite = [...new Set([...primary.readWrite, ...secondary.readWrite])];
+
+  return {
+    ledgerSequence: primary.ledgerSequence,
+    latestLedger: primary.latestLedger,
+    footprintContracts,
+    readOnly,
+    readWrite,
+  };
+}
+
+/**
  * Convert a ledger key to a base64 XDR string representation.
  *
  * @param key - Ledger key from footprint
@@ -99,20 +128,15 @@ function extractContractFromLedgerKey(key: xdr.LedgerKey): string | undefined {
  * Parse transaction XDR into execution steps for classic and Soroban operations.
  *
  * @param txXdr - Base64-encoded transaction XDR
+ * @param network - Preferred network for passphrase resolution
  * @returns Execution steps
  */
-export function parseExecutionPath(txXdr: string): ExecutionStep[] {
+export function parseExecutionPath(txXdr: string, network: Network = 'testnet'): ExecutionStep[] {
   const steps: ExecutionStep[] = [];
   let index = 0;
 
   try {
-    let tx;
-    try {
-      tx = TransactionBuilder.fromXDR(txXdr, 'Public Global Stellar Network ; September 2015');
-    } catch {
-      tx = TransactionBuilder.fromXDR(txXdr, 'Test SDF Network ; September 2015');
-    }
-
+    const tx = parseTransactionFromXdr(txXdr, network);
     const envelope = tx instanceof FeeBumpTransaction ? tx.innerTransaction : tx;
 
     for (const op of envelope.operations) {
@@ -141,21 +165,25 @@ function parseOperation(op: Operation, index: number): ExecutionStep {
   if (op.type === 'invokeHostFunction') {
     const hostFn = op as Operation.InvokeHostFunction;
     const fn = hostFn.func;
-    let contractId: string | undefined;
-    let functionName: string | undefined;
 
-    if (fn && typeof fn === 'object' && 'invokeContract' in fn) {
-      const invoke = fn as { invokeContract?: { contractAddress?: string; functionName?: string } };
-      contractId = invoke.invokeContract?.contractAddress;
-      functionName = invoke.invokeContract?.functionName;
+    if (fn.switch() === xdr.HostFunctionType.hostFunctionTypeInvokeContract()) {
+      const invoke = fn.invokeContract();
+      const contractId = Address.fromScAddress(invoke.contractAddress()).toString();
+      const functionName = invoke.functionName().toString();
+
+      return {
+        index,
+        type: 'invoke',
+        contract_id: contractId,
+        function_name: functionName,
+        description: `Invoke ${functionName} on ${contractId}`,
+      };
     }
 
     return {
       index,
       type: 'invoke',
-      contract_id: contractId,
-      function_name: functionName,
-      description: `Invoke ${functionName ?? 'host function'} on ${contractId ?? 'unknown contract'}`,
+      description: `Invoke host function (${fn.switch().name})`,
     };
   }
 
@@ -164,6 +192,56 @@ function parseOperation(op: Operation, index: number): ExecutionStep {
     type: 'classic',
     description: `Classic operation: ${op.type}`,
   };
+}
+
+/**
+ * Enrich execution path with read/write footprint steps and auth diagnostic steps.
+ *
+ * @param steps - Base execution steps from transaction operations
+ * @param context - Simulation footprint context
+ * @param authEntries - Parsed auth entries from diagnostic events
+ * @returns Enriched execution steps
+ */
+export function enrichExecutionPath(
+  steps: ExecutionStep[],
+  context: SimulationContext,
+  authEntries: AuthEntry[],
+): ExecutionStep[] {
+  const enriched = [...steps];
+  let index = steps.length;
+
+  for (const key of context.readOnly) {
+    const contractId = extractContractFromLedgerKeyString(key);
+    enriched.push({
+      index: index++,
+      type: 'read',
+      contract_id: contractId,
+      description: `Read ledger entry${contractId ? ` for ${contractId}` : ''}`,
+      ledger_keys: [key],
+    });
+  }
+
+  for (const key of context.readWrite) {
+    const contractId = extractContractFromLedgerKeyString(key);
+    enriched.push({
+      index: index++,
+      type: 'write',
+      contract_id: contractId,
+      description: `Write ledger entry${contractId ? ` for ${contractId}` : ''}`,
+      ledger_keys: [key],
+    });
+  }
+
+  for (const entry of authEntries) {
+    enriched.push({
+      index: index++,
+      type: 'auth',
+      contract_id: entry.contract_id ?? entry.address,
+      description: `Authorization required for ${entry.contract_id ?? entry.address}`,
+    });
+  }
+
+  return enriched;
 }
 
 /**
@@ -196,18 +274,18 @@ export function parseAuthEntries(events: xdr.DiagnosticEvent[]): AuthEntry[] {
  *
  * @param txXdr - Base64-encoded transaction XDR
  * @param minResourceFee - Minimum resource fee from simulation (stroops string)
+ * @param network - Preferred network for passphrase resolution
  * @returns Fee estimate with components
  */
-export function computeFeeEstimate(txXdr: string, minResourceFee: string): FeeEstimate {
+export function computeFeeEstimate(
+  txXdr: string,
+  minResourceFee: string,
+  network: Network = 'testnet',
+): FeeEstimate {
   let classicBaseFee = 100;
 
   try {
-    let tx;
-    try {
-      tx = TransactionBuilder.fromXDR(txXdr, 'Public Global Stellar Network ; September 2015');
-    } catch {
-      tx = TransactionBuilder.fromXDR(txXdr, 'Test SDF Network ; September 2015');
-    }
+    const tx = parseTransactionFromXdr(txXdr, network);
     const envelope = tx instanceof FeeBumpTransaction ? tx.innerTransaction : tx;
     classicBaseFee = Number(envelope.fee) || 100;
   } catch {
@@ -226,17 +304,26 @@ export function computeFeeEstimate(txXdr: string, minResourceFee: string): FeeEs
  * Extract resource usage from parsed Soroban simulation data.
  *
  * @param sorobanData - Parsed Soroban resource/footprint data from a successful simulation
+ * @param memoryBytes - Memory bytes from simulation cost, when available
  * @returns Resource usage metrics
  */
-export function extractResourceUsage(sorobanData?: SorobanDataBuilder): ResourceUsage {
+export function extractResourceUsage(
+  sorobanData?: SorobanDataBuilder,
+  memoryBytes?: number,
+): ResourceUsage {
   if (!sorobanData) {
-    return { cpu_instructions: 0, memory_bytes: 0, read_bytes: 0, write_bytes: 0 };
+    return {
+      cpu_instructions: 0,
+      memory_bytes: memoryBytes ?? 0,
+      read_bytes: 0,
+      write_bytes: 0,
+    };
   }
 
   const resources = sorobanData.build().resources();
   return {
     cpu_instructions: resources.instructions(),
-    memory_bytes: 0,
+    memory_bytes: memoryBytes ?? 0,
     read_bytes: resources.readBytes(),
     write_bytes: resources.writeBytes(),
   };
@@ -245,20 +332,27 @@ export function extractResourceUsage(sorobanData?: SorobanDataBuilder): Resource
 /**
  * Check TTL on ledger entries and flag near-expiry or expired entries.
  *
- * @param readWrite - Read-write ledger keys from footprint
+ * @param ledgerKeys - Ledger keys from footprint (read-only and read-write)
  * @param ledgerSequence - Current ledger sequence
+ * @param entryTtls - TTL metadata from getLedgerEntries
  * @returns TTL warnings
  */
-export function checkTTLWarnings(readWrite: string[], ledgerSequence: number): TTLWarning[] {
+export function checkTTLWarnings(
+  ledgerKeys: string[],
+  ledgerSequence: number,
+  entryTtls: LedgerEntryTTL[],
+): TTLWarning[] {
   const warnings: TTLWarning[] = [];
+  const ttlByKey = new Map(entryTtls.map((entry) => [entry.ledger_key, entry.live_until_ledger_seq]));
 
-  for (const key of readWrite) {
+  for (const key of ledgerKeys) {
+    const liveUntil = ttlByKey.get(key);
+    if (liveUntil === undefined) continue;
+
     const contractId = extractContractFromLedgerKeyString(key);
     if (!contractId) continue;
 
-    // TTL data requires ledger entry fetch; flag keys present in readWrite as monitor
-    // Full TTL resolution happens in Phase 2 with ledger entry reads
-    const ttlRemaining = TTL_WARNING_THRESHOLD;
+    const ttlRemaining = liveUntil - ledgerSequence;
     if (ttlRemaining <= 0) {
       warnings.push({
         contract_id: contractId,
@@ -266,16 +360,21 @@ export function checkTTLWarnings(readWrite: string[], ledgerSequence: number): T
         ttl_remaining: ttlRemaining,
         severity: 'CRITICAL',
       });
+    } else if (ttlRemaining < TTL_WARNING_THRESHOLD) {
+      warnings.push({
+        contract_id: contractId,
+        ledger_key: key,
+        ttl_remaining: ttlRemaining,
+        severity: 'WARNING',
+      });
     }
   }
 
-  void ledgerSequence;
   return warnings;
 }
 
 /**
  * Best-effort extraction of a contract address from a base64-encoded XDR ledger key string.
- * Used for Phase 1 TTL scanning where only the string form is available.
  *
  * @param keyStr - Base64-encoded XDR ledger key
  * @returns Contract address (strkey) or undefined
@@ -329,15 +428,22 @@ export function parseFailurePoint(error: string, executionPath: ExecutionStep[])
  *
  * @param raw - Raw simulation result from RPC
  * @param txXdr - Original transaction XDR
+ * @param network - Network used for XDR parsing
  * @returns Structured TraceResult
  */
-export function parseSimulationResult(raw: RawSimulationResult, txXdr: string): TraceResult {
-  const executionPath = parseExecutionPath(txXdr);
+export function parseSimulationResult(
+  raw: RawSimulationResult,
+  txXdr: string,
+  network: Network = 'testnet',
+): TraceResult {
+  const basePath = parseExecutionPath(txXdr, network);
   const simulationContext = extractFootprint(
     raw.sorobanData,
     raw.simulationLedger,
     raw.latestLedger,
   );
+  const authEntries = parseAuthEntries(raw.events);
+  const executionPath = enrichExecutionPath(basePath, simulationContext, authEntries);
   const stalenessDelta = raw.latestLedger - raw.simulationLedger;
   const isStale = stalenessDelta > STALENESS_THRESHOLD;
 
@@ -346,9 +452,9 @@ export function parseSimulationResult(raw: RawSimulationResult, txXdr: string): 
       success: false,
       failure_point: parseFailurePoint(raw.error, executionPath),
       execution_path: executionPath,
-      auth_entries: parseAuthEntries(raw.events),
-      fee_estimate: computeFeeEstimate(txXdr, raw.minResourceFee),
-      resource_usage: extractResourceUsage(raw.sorobanData),
+      auth_entries: authEntries,
+      fee_estimate: computeFeeEstimate(txXdr, raw.minResourceFee, network),
+      resource_usage: extractResourceUsage(raw.sorobanData, raw.memoryBytes),
       simulation_context: simulationContext,
       rpc_metrics: raw.rpcMetrics,
       staleness_warning: isStale,
@@ -358,9 +464,9 @@ export function parseSimulationResult(raw: RawSimulationResult, txXdr: string): 
   return {
     success: true,
     execution_path: executionPath,
-    auth_entries: parseAuthEntries(raw.events),
-    fee_estimate: computeFeeEstimate(txXdr, raw.minResourceFee),
-    resource_usage: extractResourceUsage(raw.sorobanData),
+    auth_entries: authEntries,
+    fee_estimate: computeFeeEstimate(txXdr, raw.minResourceFee, network),
+    resource_usage: extractResourceUsage(raw.sorobanData, raw.memoryBytes),
     simulation_context: simulationContext,
     rpc_metrics: raw.rpcMetrics,
     staleness_warning: isStale,

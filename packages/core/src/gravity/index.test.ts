@@ -131,4 +131,77 @@ describe('scoreGravity', () => {
     expect(pay?.impact).toBe('WARNING');
     expect(oracle?.impact).toBe('MONITOR');
   });
+
+  it('returns NONE recovery for archived entry failures', () => {
+    const trace: TraceResult = {
+      success: false,
+      failure_point: {
+        step_index: 0,
+        contract_id: 'CPAY',
+        error_code: 'ENTRY_ARCHIVED',
+        error_message: 'entry archived',
+        root_cause: 'Ledger entry is archived or TTL expired',
+      },
+      execution_path: [],
+      auth_entries: [],
+      fee_estimate: { classic_base_fee: 100, min_resource_fee: 0, total_fee: 100 },
+      resource_usage: { cpu_instructions: 0, memory_bytes: 0, read_bytes: 0, write_bytes: 0 },
+      simulation_context: {
+        ledgerSequence: 1,
+        latestLedger: 1,
+        footprintContracts: ['CPAY'],
+        readOnly: [],
+        readWrite: [],
+      },
+    };
+
+    const field = makeField();
+    field.ttl_warnings = [
+      {
+        contract_id: 'CPAY',
+        ledger_key: 'key',
+        ttl_remaining: -1,
+        severity: 'CRITICAL',
+      },
+    ];
+
+    const gravity = scoreGravity(trace, field, { manifest });
+    expect(gravity.recovery).toBe('NONE');
+  });
+
+  it('returns PARTIAL recovery when critical contracts are impacted', () => {
+    const trace: TraceResult = {
+      success: false,
+      failure_point: {
+        step_index: 0,
+        contract_id: 'CPAY',
+        error_code: 'AUTH_REQUIRED',
+        error_message: 'require_auth failed',
+        root_cause: 'Missing or invalid authorization credentials',
+      },
+      execution_path: [
+        {
+          index: 0,
+          type: 'invoke',
+          contract_id: 'CPAY',
+          function_name: 'transfer',
+          description: 'Invoke transfer on CPAY',
+        },
+      ],
+      auth_entries: [],
+      fee_estimate: { classic_base_fee: 100, min_resource_fee: 0, total_fee: 100 },
+      resource_usage: { cpu_instructions: 0, memory_bytes: 0, read_bytes: 0, write_bytes: 0 },
+      simulation_context: {
+        ledgerSequence: 1,
+        latestLedger: 1,
+        footprintContracts: ['CPAY', 'CPOOL'],
+        readOnly: [],
+        readWrite: [],
+      },
+    };
+
+    const gravity = scoreGravity(trace, makeField(), { manifest });
+    expect(gravity.critical).toContain('CPAY');
+    expect(gravity.recovery).toBe('PARTIAL');
+  });
 });

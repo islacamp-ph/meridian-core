@@ -4,7 +4,10 @@
   "private": true,
   "description": "Pre-execution intelligence for Stellar developers",
   "workspaces": [
-    "packages/*"
+    "packages/core",
+    "packages/ai",
+    "packages/api",
+    "packages/cli"
   ],
   "scripts": {
     "build": "turbo run build",

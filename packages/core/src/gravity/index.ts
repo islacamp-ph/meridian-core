@@ -9,6 +9,7 @@ import type {
   GravityResult,
   GravityScoreBreakdown,
   ImpactLevel,
+  RecoveryLevel,
   TraceResult,
 } from '../types.js';
 
@@ -85,7 +86,7 @@ export function scoreGravity(
     .reduce((sum, contract) => sum + (contract.active_users ?? 0), 0);
 
   const scoreBreakdown = computeBlastRadius(field.contracts_mapped, affectedContracts);
-  const recovery = critical.length > 0 ? 'PARTIAL' : 'FULL';
+  const recovery = assessRecovery(trace, field, critical);
 
   return {
     blast_radius: scoreBreakdown.normalized_score,
@@ -291,6 +292,26 @@ function classifyImpact(score: number, traceSuccess: boolean): ImpactLevel {
   if (score >= IMPACT_THRESHOLDS.WARNING) return 'WARNING';
   if (score >= IMPACT_THRESHOLDS.MONITOR) return 'MONITOR';
   return 'SAFE';
+}
+
+function assessRecovery(
+  trace: TraceResult,
+  field: FieldResult,
+  critical: string[],
+): RecoveryLevel {
+  if (trace.failure_point?.error_code === 'ENTRY_ARCHIVED') {
+    return 'NONE';
+  }
+
+  if (!trace.success && field.ttl_warnings.some((warning) => warning.severity === 'CRITICAL')) {
+    return 'NONE';
+  }
+
+  if (critical.length > 0) {
+    return 'PARTIAL';
+  }
+
+  return 'FULL';
 }
 
 function summarizeFactors(factors: GravityFactor[]): string {

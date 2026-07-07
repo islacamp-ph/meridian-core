@@ -11,6 +11,7 @@ import type {
   FixStep,
   MeridianError,
   SimulationContext,
+  TTLWarning,
   Verdict,
 } from './types.js';
 
@@ -87,39 +88,123 @@ export function computeConfidence(
 /**
  * Generate fix sequence for WARN or ABORT verdicts.
  *
- * @param traceSuccess - Whether simulation succeeded
- * @param failureRootCause - Root cause from failure point
+ * @param input - Verdict and analysis context for fix step generation
  * @returns Fix steps or undefined
  */
-export function generateFixSequence(
-  traceSuccess: boolean,
-  failureRootCause?: string,
-): FixStep[] | undefined {
-  if (traceSuccess) return undefined;
+export function generateFixSequence(input: {
+  verdict: Verdict;
+  traceSuccess: boolean;
+  warnings?: string[];
+  failureRootCause?: string;
+  failureErrorCode?: string;
+  ttlWarnings?: TTLWarning[];
+  blastRadius?: number;
+  manifestCoverage?: number;
+}): FixStep[] | undefined {
+  if (input.verdict !== 'WARN' && input.verdict !== 'ABORT') {
+    return undefined;
+  }
 
-  return [
-    {
-      order: 1,
-      operation: 'diagnose',
-      description: failureRootCause ?? 'Review simulation failure point',
-      estimated_cost_stroops: 0,
-      estimated_time_minutes: 5,
-    },
-    {
-      order: 2,
+  const steps: FixStep[] = [];
+  let order = 1;
+
+  if (input.verdict === 'ABORT') {
+    if (input.failureErrorCode === 'ENTRY_ARCHIVED') {
+      steps.push({
+        order: order++,
+        operation: 'restore_archived_entry',
+        description: 'Restore archived ledger entries or extend TTL before resubmitting',
+        estimated_cost_stroops: 500,
+        estimated_time_minutes: 15,
+      });
+    } else if (input.failureErrorCode === 'AUTH_REQUIRED') {
+      steps.push({
+        order: order++,
+        operation: 'fix_auth',
+        description: 'Ensure all require_auth credentials are signed and valid',
+        estimated_cost_stroops: 100,
+        estimated_time_minutes: 10,
+      });
+    } else if (input.failureErrorCode === 'INSUFFICIENT_BALANCE') {
+      steps.push({
+        order: order++,
+        operation: 'fund_account',
+        description: 'Add sufficient balance to cover fees and operation costs',
+        estimated_cost_stroops: 0,
+        estimated_time_minutes: 5,
+      });
+    } else {
+      steps.push({
+        order: order++,
+        operation: 'diagnose',
+        description: input.failureRootCause ?? 'Review simulation failure point',
+        estimated_cost_stroops: 0,
+        estimated_time_minutes: 5,
+      });
+    }
+  }
+
+  if (input.verdict === 'WARN') {
+    if (input.warnings?.some((warning) => warning.includes('stale'))) {
+      steps.push({
+        order: order++,
+        operation: 'refresh_ledger',
+        description: 'Re-simulate against the latest ledger to refresh stale simulation data',
+        estimated_cost_stroops: 0,
+        estimated_time_minutes: 2,
+      });
+    }
+
+    if (input.manifestCoverage !== undefined && input.manifestCoverage < 0.5) {
+      steps.push({
+        order: order++,
+        operation: 'add_manifest',
+        description: 'Provide an ecosystem manifest to improve dependency mapping confidence',
+        estimated_cost_stroops: 0,
+        estimated_time_minutes: 10,
+      });
+    }
+
+    if (input.blastRadius !== undefined && input.blastRadius >= 50) {
+      steps.push({
+        order: order++,
+        operation: 'review_scope',
+        description: 'Review critical contracts and reduce transaction blast radius',
+        estimated_cost_stroops: 0,
+        estimated_time_minutes: 15,
+      });
+    }
+
+    if (input.ttlWarnings?.some((warning) => warning.severity === 'WARNING')) {
+      steps.push({
+        order: order++,
+        operation: 'extend_ttl',
+        description: 'Extend TTL on ledger entries nearing archival expiry',
+        estimated_cost_stroops: 200,
+        estimated_time_minutes: 10,
+      });
+    }
+  }
+
+  if (input.verdict === 'ABORT' && input.failureErrorCode !== 'AUTH_REQUIRED') {
+    steps.push({
+      order: order++,
       operation: 'fix_auth',
-      description: 'Ensure all require_auth credentials are signed and valid',
+      description: 'Verify authorization credentials if auth may be contributing to failure',
       estimated_cost_stroops: 100,
       estimated_time_minutes: 10,
-    },
-    {
-      order: 3,
-      operation: 'resimulate',
-      description: 'Re-run MERIDIAN analysis after applying fixes',
-      estimated_cost_stroops: 0,
-      estimated_time_minutes: 2,
-    },
-  ];
+    });
+  }
+
+  steps.push({
+    order: order++,
+    operation: 'resimulate',
+    description: 'Re-run MERIDIAN analysis after applying fixes',
+    estimated_cost_stroops: 0,
+    estimated_time_minutes: 2,
+  });
+
+  return steps;
 }
 
 /**
@@ -141,6 +226,7 @@ export async function analyze(
   const traceResult = await trace(request.tx, {
     network: request.network,
     rpcUrl: request.options?.rpc_url,
+    authMode: request.options?.auth_mode ?? 'enforce',
   });
   const traceMs = Date.now() - traceStartedAt;
 
@@ -161,9 +247,13 @@ export async function analyze(
   const fieldStartedAt = Date.now();
   const fieldResult = request.options?.skip_field
     ? emptyFieldResult()
-    : buildFieldGraph(traceResult, context, {
+    : await buildFieldGraph(traceResult, context, {
         network: request.network,
         manifest: request.ecosystem,
+        rpcUrl: request.options?.rpc_url,
+        authMode: request.options?.field_auth_mode,
+        deepDiscovery: request.options?.deep_discovery,
+        txXdr: request.tx,
       });
   const fieldMs = Date.now() - fieldStartedAt;
 
@@ -193,11 +283,20 @@ export async function analyze(
   if (confidence < threshold) {
     warnings.push(`Confidence ${confidence} is below threshold ${threshold}`);
   }
+  if (fieldResult.ttl_warnings.length > 0) {
+    warnings.push(`${fieldResult.ttl_warnings.length} TTL warning(s) detected on footprint entries`);
+  }
 
-  const fixSequence = generateFixSequence(
-    traceResult.success,
-    traceResult.failure_point?.root_cause,
-  );
+  const fixSequence = generateFixSequence({
+    verdict,
+    traceSuccess: traceResult.success,
+    warnings,
+    failureRootCause: traceResult.failure_point?.root_cause,
+    failureErrorCode: traceResult.failure_point?.error_code,
+    ttlWarnings: fieldResult.ttl_warnings,
+    blastRadius: gravityResult.blast_radius,
+    manifestCoverage: fieldResult.manifest_coverage,
+  });
 
   const explainability = buildExplainabilityReport(
     traceResult,

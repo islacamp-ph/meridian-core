@@ -1,7 +1,14 @@
-import { rpc, SorobanDataBuilder, TransactionBuilder, Networks, xdr } from '@stellar/stellar-sdk';
+import {
+  rpc,
+  SorobanDataBuilder,
+  xdr,
+  type FeeBumpTransaction,
+  type Transaction,
+} from '@stellar/stellar-sdk';
 import { classifyStellarError } from '../errors.js';
 import { logger } from '../logger.js';
-import type { MeridianError, RpcMetrics } from '../types.js';
+import type { LedgerEntryTTL, MeridianError, Network, RpcMetrics, SimulationAuthMode } from '../types.js';
+import { parseTransactionFromXdr } from './network.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -15,6 +22,28 @@ export interface RawSimulationResult {
   error?: string;
   /** Parsed Soroban resource/footprint data, present only on a successful simulation. */
   sorobanData?: SorobanDataBuilder;
+  /** Memory bytes from simulation cost (memBytes), when reported by RPC. */
+  memoryBytes?: number;
+}
+
+export interface SimulateTransactionOptions {
+  network?: Network;
+  authMode?: SimulationAuthMode;
+  timeoutMs?: number;
+}
+
+interface RawSimulateRpcResponse {
+  id: string;
+  latestLedger: number;
+  error?: string;
+  transactionData?: string;
+  events?: string[];
+  minResourceFee?: string;
+  results?: Array<{ auth?: string[]; xdr?: string }>;
+  cost?: {
+    cpuInsns?: string;
+    memBytes?: string;
+  };
 }
 
 /**
@@ -88,66 +117,120 @@ async function getLatestLedgerSequence(
   }
 }
 
+function createRpcServer(rpcUrl: string): rpc.Server {
+  return new rpc.Server(rpcUrl, { allowHttp: rpcUrl.startsWith('http://') });
+}
+
+async function postSimulateTransaction(
+  rpcUrl: string,
+  transaction: Transaction | FeeBumpTransaction,
+  authMode?: SimulationAuthMode,
+): Promise<RawSimulateRpcResponse> {
+  const params: Record<string, unknown> = {
+    transaction: transaction.toXDR(),
+  };
+  if (authMode) {
+    params.authMode = authMode;
+  }
+
+  const response = await fetch(rpcUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'simulateTransaction',
+      params,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`RPC simulateTransaction failed: HTTP ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    result?: RawSimulateRpcResponse;
+    error?: { message?: string };
+  };
+
+  if (payload.error) {
+    throw new Error(payload.error.message ?? 'RPC simulateTransaction error');
+  }
+  if (!payload.result) {
+    throw new Error('RPC simulateTransaction returned no result');
+  }
+
+  return payload.result;
+}
+
+function parseRawSimulation(raw: RawSimulateRpcResponse): {
+  success: boolean;
+  error?: string;
+  sorobanData?: SorobanDataBuilder;
+  minResourceFee: string;
+  events: xdr.DiagnosticEvent[];
+  memoryBytes?: number;
+} {
+  const events = (raw.events ?? []).map((evt) => xdr.DiagnosticEvent.fromXDR(evt, 'base64'));
+
+  if (typeof raw.error === 'string') {
+    return {
+      success: false,
+      error: raw.error,
+      minResourceFee: '0',
+      events,
+    };
+  }
+
+  const memoryBytes = raw.cost?.memBytes ? parseInt(raw.cost.memBytes, 10) : undefined;
+
+  return {
+    success: true,
+    minResourceFee: raw.minResourceFee ?? '0',
+    events,
+    memoryBytes: Number.isFinite(memoryBytes) ? memoryBytes : undefined,
+    sorobanData: raw.transactionData
+      ? new SorobanDataBuilder(raw.transactionData)
+      : undefined,
+  };
+}
+
 /**
  * Call Stellar simulateTransaction RPC with timeout and error classification.
  *
  * @param txXdr - Base64-encoded transaction XDR
  * @param rpcUrl - Soroban RPC endpoint URL
- * @param timeoutMs - Request timeout in milliseconds
+ * @param options - Simulation options (network, auth mode, timeout)
  * @returns Raw simulation result or MeridianError
  */
 export async function simulateTransaction(
   txXdr: string,
   rpcUrl: string,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  options: SimulateTransactionOptions | number = DEFAULT_TIMEOUT_MS,
 ): Promise<RawSimulationResult | MeridianError> {
-  const server = new rpc.Server(rpcUrl, { allowHttp: rpcUrl.startsWith('http://') });
+  const normalizedOptions: SimulateTransactionOptions =
+    typeof options === 'number' ? { timeoutMs: options } : options;
+  const timeoutMs = normalizedOptions.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const network = normalizedOptions.network ?? 'testnet';
+  const authMode = normalizedOptions.authMode ?? 'enforce';
+
+  const server = createRpcServer(rpcUrl);
 
   try {
-    logger.debug('simulateTransaction:start', { rpcUrl });
+    logger.debug('simulateTransaction:start', { rpcUrl, network, authMode });
 
-    const transaction = TransactionBuilder.fromXDR(
-      txXdr,
-      Networks.TESTNET, // network passphrase resolved during parse; RPC validates
-    );
+    const transaction = parseTransactionFromXdr(txXdr, network);
 
     const simulateStartedAt = Date.now();
-    const simResponse = await withTimeout(
-      server.simulateTransaction(transaction),
+    const rawResponse = await withTimeout(
+      postSimulateTransaction(rpcUrl, transaction, authMode),
       timeoutMs,
       'simulateTransaction',
     );
     const simulateTransactionMs = Date.now() - simulateStartedAt;
+    const parsed = parseRawSimulation(rawResponse);
+    const simulationLedger = rawResponse.latestLedger;
 
-    if (rpc.Api.isSimulationError(simResponse)) {
-      const simulationLedger = simResponse.latestLedger;
-      const latestLedger = await getLatestLedgerSequence(server, timeoutMs, simulationLedger);
-      const rpcMetrics: RpcMetrics = {
-        simulate_transaction_ms: simulateTransactionMs,
-        get_latest_ledger_ms: latestLedger.elapsedMs,
-        latest_ledger_fallback: latestLedger.usedFallback,
-        latest_ledger_timed_out: latestLedger.timedOut,
-        timeout_ms: timeoutMs,
-      };
-
-      logger.info('simulateTransaction:complete', {
-        rpcUrl,
-        success: false,
-        ...rpcMetrics,
-      });
-
-      return {
-        success: false,
-        latestLedger: latestLedger.sequence,
-        simulationLedger,
-        minResourceFee: '0',
-        events: simResponse.events ?? [],
-        rpcMetrics,
-        error: simResponse.error,
-      };
-    }
-
-    const simulationLedger = simResponse.latestLedger;
     const latestLedger = await getLatestLedgerSequence(server, timeoutMs, simulationLedger);
     const rpcMetrics: RpcMetrics = {
       simulate_transaction_ms: simulateTransactionMs,
@@ -159,23 +242,99 @@ export async function simulateTransaction(
 
     logger.info('simulateTransaction:complete', {
       rpcUrl,
-      success: true,
+      network,
+      authMode,
+      success: parsed.success,
       ...rpcMetrics,
     });
+
+    if (!parsed.success) {
+      return {
+        success: false,
+        latestLedger: latestLedger.sequence,
+        simulationLedger,
+        minResourceFee: '0',
+        events: parsed.events,
+        rpcMetrics,
+        error: parsed.error,
+      };
+    }
 
     return {
       success: true,
       latestLedger: latestLedger.sequence,
       simulationLedger,
-      minResourceFee: simResponse.minResourceFee,
-      events: simResponse.events ?? [],
+      minResourceFee: parsed.minResourceFee,
+      events: parsed.events,
       rpcMetrics,
-      sorobanData: simResponse.transactionData,
+      sorobanData: parsed.sorobanData,
+      memoryBytes: parsed.memoryBytes,
     };
   } catch (err) {
     logger.error('simulateTransaction:failed', {
       error: err instanceof Error ? err.message : String(err),
     });
     return classifyStellarError(err instanceof Error ? err : String(err), 'TRACE');
+  }
+}
+
+/**
+ * Fetch TTL metadata for ledger keys via getLedgerEntries RPC.
+ *
+ * @param rpcUrl - Soroban RPC endpoint URL
+ * @param ledgerKeys - Base64-encoded XDR ledger keys
+ * @param timeoutMs - Request timeout in milliseconds
+ * @returns TTL metadata per ledger key
+ */
+export async function fetchLedgerEntryTTLs(
+  rpcUrl: string,
+  ledgerKeys: string[],
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<LedgerEntryTTL[]> {
+  if (ledgerKeys.length === 0) return [];
+
+  const server = createRpcServer(rpcUrl);
+  const keys = ledgerKeys.map((key) => xdr.LedgerKey.fromXDR(key, 'base64'));
+
+  const response = await withTimeout(
+    server.getLedgerEntries(...keys),
+    timeoutMs,
+    'getLedgerEntries',
+  );
+
+  return response.entries.map((entry) => ({
+    ledger_key: entry.key.toXDR('base64'),
+    live_until_ledger_seq: entry.liveUntilLedgerSeq,
+  }));
+}
+
+/**
+ * Fetch on-chain WASM hash for a contract, when available.
+ *
+ * @param rpcUrl - Soroban RPC endpoint URL
+ * @param contractId - Contract address (C... strkey)
+ * @param timeoutMs - Request timeout in milliseconds
+ * @returns Hex-encoded WASM hash or undefined
+ */
+export async function fetchContractWasmHash(
+  rpcUrl: string,
+  contractId: string,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<string | undefined> {
+  const server = createRpcServer(rpcUrl);
+  try {
+    const wasm = await withTimeout(
+      server.getContractWasmByContractId(contractId),
+      timeoutMs,
+      'getContractWasmByContractId',
+    );
+    const { createHash } = await import('node:crypto');
+    return createHash('sha256').update(wasm).digest('hex');
+  } catch (err) {
+    logger.debug('fetchContractWasmHash:failed', {
+      contractId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return undefined;
   }
 }
