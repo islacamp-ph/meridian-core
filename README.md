@@ -48,18 +48,42 @@ flowchart TD
 
 | Layer | Package | What it does |
 |---|---|---|
-| **TRACE** | `@meridian/core` | Simulates the transaction against Soroban RPC, parses the execution path, auth entries, fee estimate, and resource usage |
-| **FIELD** | `@meridian/core` | Maps every contract touched, directly or downstream, and cross-references it against an optional ecosystem manifest |
-| **GRAVITY** | `@meridian/core` | Scores the blast radius — which contracts and how many users are affected if the transaction fails |
+| **TRACE** | `@meridian/core` | Simulates the transaction against Soroban RPC (`enforce` auth mode), parses the execution path (invoke, read, write, auth steps), auth entries, fee estimate, and resource usage including `memory_bytes` |
+| **FIELD** | `@meridian/core` | Maps every contract touched — via footprint, execution path, manifest BFS, and optional `record` / `record_allow_nonroot` re-simulation — checks TTL/archival risk on footprint entries, and enriches nodes with on-chain WASM hashes |
+| **GRAVITY** | `@meridian/core` | Scores the blast radius with evidence-based factors and returns a recoverability assessment (`FULL`, `PARTIAL`, or `NONE`) |
 | **BRIEF** | `@meridian/ai` | Synthesizes a grounded, plain-language risk briefing via Claude (with a deterministic fallback if no API key is set) |
+
+### Simulation auth modes
+
+Soroban `simulateTransaction` supports three auth modes. MERIDIAN uses them as follows:
+
+| Mode | Used by | Purpose |
+|---|---|---|
+| `enforce` | TRACE (default) | Production analysis — strict authorization checking |
+| `record` | FIELD (default) | Dependency discovery — records auth entries without enforcing |
+| `record_allow_nonroot` | FIELD (`deep_discovery: true`) | Deep ecosystem mapping — allows non-root authorization paths |
+
+### Analysis output
+
+Beyond the verdict, every full analysis returns:
+
+| Field | Layer | Description |
+|---|---|---|
+| `trace.execution_path` | TRACE | Invoke, read, write, auth, and classic steps |
+| `trace.resource_usage.memory_bytes` | TRACE | Memory allocated during simulation (from RPC `cost.memBytes`) |
+| `field.dependency_graph` | FIELD | Contracts with depth, manifest metadata, `source`, and optional `wasm_hash` |
+| `field.ttl_warnings` | FIELD | Entries nearing archival expiry (`WARNING`) or already expired (`CRITICAL`) |
+| `gravity.recovery` | GRAVITY | `FULL` — no critical impacts; `PARTIAL` — some recoverable risk; `NONE` — archived state or catastrophic failure |
+| `fix_sequence` | analyze | Numbered remediation steps returned on `WARN` and `ABORT` verdicts |
+| `warnings` | analyze | Staleness, low confidence, TTL, and other advisory messages |
 
 ## Verdict States
 
 | Verdict | Meaning |
 |---|---|
 | 🟢 `CLEAR` | Safe to submit |
-| 🟡 `WARN`  | Submit with caution — review warnings |
-| 🔴 `ABORT` | Do not submit — critical failure predicted |
+| 🟡 `WARN`  | Submit with caution — review warnings and `fix_sequence` |
+| 🔴 `ABORT` | Do not submit — critical failure predicted; follow `fix_sequence` |
 
 ## Requirements
 
@@ -128,6 +152,8 @@ npm test
 | `--confidence-threshold <n>` | `analyze` | Minimum confidence (0–1) required for a `CLEAR` verdict |
 | `--no-brief` | `analyze` | Skip GenAI BRIEF synthesis (structured layers only) |
 | `--api-key <key>` | `analyze` | Anthropic API key for BRIEF synthesis (else read from env) |
+
+Advanced simulation options (`auth_mode`, `field_auth_mode`, `deep_discovery`) are available via the [REST API](#rest-api) `options` object or when calling `analyze()` from `@meridian/core` directly.
 
 ### Examples
 
@@ -203,7 +229,34 @@ curl http://localhost:3000/v1/health
 curl -X POST http://localhost:3000/v1/analyze \
   -H "Content-Type: application/json" \
   -d '{"tx": "<base64-xdr>", "network": "testnet"}'
+
+# Full analysis with ecosystem manifest and simulation options
+curl -X POST http://localhost:3000/v1/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tx": "<base64-xdr>",
+    "network": "mainnet",
+    "ecosystem": { "name": "my-ecosystem", "version": "1.0.0", "contracts": [] },
+    "options": {
+      "auth_mode": "enforce",
+      "field_auth_mode": "record",
+      "deep_discovery": false,
+      "confidence_threshold": 0.75
+    }
+  }'
 ```
+
+### Analyze `options`
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `skip_field` | `boolean` | `false` | Skip FIELD dependency mapping |
+| `skip_gravity` | `boolean` | `false` | Skip GRAVITY blast-radius scoring |
+| `confidence_threshold` | `number` | `0.75` | Minimum confidence for a `CLEAR` verdict |
+| `rpc_url` | `string` | env | Override Soroban RPC endpoint |
+| `auth_mode` | `"enforce"` \| `"record"` \| `"record_allow_nonroot"` | `"enforce"` | Auth mode for TRACE simulation |
+| `field_auth_mode` | `"enforce"` \| `"record"` \| `"record_allow_nonroot"` | `"record"` | Auth mode for FIELD dependency discovery |
+| `deep_discovery` | `boolean` | `false` | When `true`, FIELD uses `record_allow_nonroot` for deep ecosystem mapping |
 
 ## Docker
 
@@ -246,6 +299,8 @@ packages/
 └── cli/     meridian / meridian-core command-line interface
 ```
 
+`packages/web/` is a local marketing site and is excluded from the published workspace (see `.gitignore`).
+
 Managed with npm workspaces and [Turborepo](https://turbo.build/).
 
 ## Development
@@ -274,12 +329,24 @@ Each package can also be built, tested, and typechecked independently from its o
 
 ## Roadmap
 
-**Phase 1 — Vertical Slice** *(current)*
+**Phase 1 — Vertical Slice** *(complete)*
 - [x] `packages/core/trace` — simulateTransaction wrapper + XDR parser
 - [x] `packages/ai/brief` — Claude API synthesis with fallback
 - [x] `packages/api/` — POST /v1/analyze returning full response shape
 - [x] `packages/cli/` — `meridian` / `meridian-core` command-line interface
+- [x] Evidence-based GRAVITY scoring with explainability and batch analysis
+
+**Phase 2 — Production Hardening** *(in progress)*
+- [x] Network-aware RPC simulation (mainnet/testnet passphrases)
+- [x] Soroban auth modes (`enforce`, `record`, `record_allow_nonroot`)
+- [x] TTL / archival checks via `getLedgerEntries`
+- [x] Enriched execution path (invoke, read, write, auth steps)
+- [x] `memory_bytes` from simulation cost
+- [x] Recovery assessment (`FULL` / `PARTIAL` / `NONE`)
+- [x] Fix sequences on `WARN` and `ABORT` verdicts
+- [x] FIELD deep discovery with record-mode re-simulation and on-chain WASM hashes
 - [ ] End-to-end validation with ScholarSeal canonical test case
+- [ ] CLI flags for `auth_mode`, `field_auth_mode`, and `deep_discovery`
 
 ## License
 
