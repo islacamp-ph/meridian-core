@@ -1,3 +1,4 @@
+import { cors } from 'hono/cors';
 import { createMiddleware } from 'hono/factory';
 import { Hono } from 'hono';
 import {
@@ -8,8 +9,20 @@ import {
   scoreGravity,
   trace,
 } from '@meridian/core';
+import type {
+  AnalyzeRequest,
+  AnalyzeResponse,
+  BatchAnalyzeItemRequest,
+  FieldResult,
+  GravityResult,
+  MeridianError,
+  TraceResult,
+} from '@meridian/core';
 import { synthesizeBrief } from '@meridian/ai';
-import type { AnalyzeRequest, BatchAnalyzeItemRequest, MeridianError } from '@meridian/core';
+import { getCachedLayerResult, setCachedLayerResult } from './cache/index.js';
+import { authMiddleware } from './middleware/auth.js';
+import { bodyLimitMiddleware } from './middleware/bodyLimit.js';
+import { rateLimitMiddleware } from './middleware/rateLimit.js';
 import {
   getObservabilitySnapshot,
   recordAnalyzeObservability,
@@ -18,6 +31,7 @@ import {
   recordRequestComplete,
   recordRequestStart,
 } from './observability.js';
+import { openApiDocsHtml, openApiDocument } from './openapi.js';
 import {
   parseAnalyzeRequest,
   parseBatchAnalyzeRequest,
@@ -44,6 +58,12 @@ type Env = {
 };
 
 const app = new Hono<Env>();
+
+function parseCorsOrigins(): string | string[] {
+  const raw = process.env.CORS_ORIGINS;
+  if (!raw || raw === '*') return '*';
+  return raw.split(',').map((origin) => origin.trim()).filter(Boolean);
+}
 
 /**
  * Check if a value is a MeridianError.
@@ -94,6 +114,100 @@ function validatedJsonBody<Key extends keyof Env['Variables'], T>(
   });
 }
 
+function manifestCacheSuffix(ecosystem: AnalyzeRequest['ecosystem']): string {
+  if (!ecosystem) return '';
+  return ecosystem.name ?? 'manifest';
+}
+
+async function cachedTrace(
+  tx: string,
+  network: TraceRequestBody['network'],
+): Promise<TraceResult | MeridianError> {
+  const cached = await getCachedLayerResult<TraceResult>('trace', network, tx);
+  if (cached) return cached;
+
+  const result = await trace(tx, { network });
+  if (!isMeridianError(result)) {
+    await setCachedLayerResult('trace', network, tx, result.simulation_context.ledgerSequence, result);
+  }
+  return result;
+}
+
+async function cachedField(
+  tx: string,
+  network: FieldRequestBody['network'],
+  ecosystem?: FieldRequestBody['ecosystem'],
+): Promise<FieldResult | MeridianError> {
+  const suffix = manifestCacheSuffix(ecosystem);
+  const traceResult = await cachedTrace(tx, network);
+  if (isMeridianError(traceResult)) return traceResult;
+
+  const cached = await getCachedLayerResult<FieldResult>(
+    'field',
+    network,
+    tx,
+    traceResult.simulation_context.latestLedger,
+    suffix,
+  );
+  if (cached) return cached;
+
+  const fieldResult = await buildFieldGraph(traceResult, traceResult.simulation_context, {
+    network,
+    manifest: ecosystem,
+    txXdr: tx,
+  });
+
+  await setCachedLayerResult(
+    'field',
+    network,
+    tx,
+    traceResult.simulation_context.ledgerSequence,
+    fieldResult,
+    { suffix },
+  );
+
+  return fieldResult;
+}
+
+async function cachedGravity(
+  tx: string,
+  network: GravityRequestBody['network'],
+  ecosystem?: GravityRequestBody['ecosystem'],
+): Promise<GravityResult | MeridianError> {
+  const suffix = manifestCacheSuffix(ecosystem);
+  const traceResult = await cachedTrace(tx, network);
+  if (isMeridianError(traceResult)) return traceResult;
+
+  const cached = await getCachedLayerResult<GravityResult>(
+    'gravity',
+    network,
+    tx,
+    traceResult.simulation_context.latestLedger,
+    suffix,
+  );
+  if (cached) return cached;
+
+  const fieldResult = await cachedField(tx, network, ecosystem);
+  if (isMeridianError(fieldResult)) return fieldResult;
+
+  const gravityResult = scoreGravity(traceResult, fieldResult, { manifest: ecosystem });
+  await setCachedLayerResult(
+    'gravity',
+    network,
+    tx,
+    traceResult.simulation_context.ledgerSequence,
+    gravityResult,
+    { suffix },
+  );
+
+  return gravityResult;
+}
+
+app.use('*', cors({ origin: parseCorsOrigins() }));
+app.use('*', bodyLimitMiddleware);
+app.use('*', rateLimitMiddleware);
+app.use('*', authMiddleware);
+
 app.use('*', async (c, next) => {
   const requestId = crypto.randomUUID();
   const startedAt = Date.now();
@@ -120,6 +234,20 @@ app.get('/v1/version', (c) => {
 });
 
 /**
+ * GET /v1/openapi.json — OpenAPI specification
+ */
+app.get('/v1/openapi.json', (c) => {
+  return c.json(openApiDocument);
+});
+
+/**
+ * GET /v1/docs — Swagger UI
+ */
+app.get('/v1/docs', (c) => {
+  return c.html(openApiDocsHtml);
+});
+
+/**
  * GET /v1/metrics — lightweight in-memory observability snapshot
  */
 app.get('/v1/metrics', (c) => {
@@ -133,7 +261,34 @@ app.post('/v1/analyze', validatedJsonBody('analyzeBody', parseAnalyzeRequest), a
   const body = c.get('analyzeBody')!;
   const requestId = c.get('requestId');
 
-  const analysis = await analyze(body);
+  const cached = await getCachedLayerResult<Omit<AnalyzeResponse, 'brief'>>(
+    'analyze',
+    body.network,
+    body.tx,
+    undefined,
+    manifestCacheSuffix(body.ecosystem),
+  );
+
+  let analysis: Omit<AnalyzeResponse, 'brief'> | MeridianError;
+  let cacheHit = false;
+
+  if (cached) {
+    analysis = cached;
+    cacheHit = true;
+  } else {
+    analysis = await analyze(body);
+    if (!isMeridianError(analysis)) {
+      await setCachedLayerResult(
+        'analyze',
+        body.network,
+        body.tx,
+        analysis.meta.ledger_sequence,
+        analysis,
+        { verdict: analysis.verdict, suffix: manifestCacheSuffix(body.ecosystem) },
+      );
+    }
+  }
+
   if (isMeridianError(analysis)) {
     recordEndpointError(requestId, '/v1/analyze', analysis, 502);
     return c.json(analysis, 502);
@@ -185,6 +340,7 @@ app.post('/v1/analyze', validatedJsonBody('analyzeBody', parseAnalyzeRequest), a
     warnings,
     meta: {
       ...analysis.meta,
+      cache_hit: cacheHit,
       layer_timings_ms: {
         ...analysis.meta.layer_timings_ms,
         brief: briefMs,
@@ -233,7 +389,7 @@ app.post('/v1/trace', validatedJsonBody('traceBody', parseTraceRequest), async (
   const body = c.get('traceBody')!;
   const requestId = c.get('requestId');
 
-  const result = await trace(body.tx, { network: body.network });
+  const result = await cachedTrace(body.tx, body.network);
   if (isMeridianError(result)) {
     recordEndpointError(requestId, '/v1/trace', result, 502);
     return c.json(result, 502);
@@ -248,17 +404,11 @@ app.post('/v1/field', validatedJsonBody('fieldBody', parseFieldRequest), async (
   const body = c.get('fieldBody')!;
   const requestId = c.get('requestId');
 
-  const traceResult = await trace(body.tx, { network: body.network });
-  if (isMeridianError(traceResult)) {
-    recordEndpointError(requestId, '/v1/field', traceResult, 502);
-    return c.json(traceResult, 502);
+  const fieldResult = await cachedField(body.tx, body.network, body.ecosystem);
+  if (isMeridianError(fieldResult)) {
+    recordEndpointError(requestId, '/v1/field', fieldResult, 502);
+    return c.json(fieldResult, 502);
   }
-
-  const fieldResult = await buildFieldGraph(traceResult, traceResult.simulation_context, {
-    network: body.network,
-    manifest: body.ecosystem,
-    txXdr: body.tx,
-  });
 
   return c.json(fieldResult);
 });
@@ -270,19 +420,12 @@ app.post('/v1/gravity', validatedJsonBody('gravityBody', parseGravityRequest), a
   const body = c.get('gravityBody')!;
   const requestId = c.get('requestId');
 
-  const traceResult = await trace(body.tx, { network: body.network });
-  if (isMeridianError(traceResult)) {
-    recordEndpointError(requestId, '/v1/gravity', traceResult, 502);
-    return c.json(traceResult, 502);
+  const gravityResult = await cachedGravity(body.tx, body.network, body.ecosystem);
+  if (isMeridianError(gravityResult)) {
+    recordEndpointError(requestId, '/v1/gravity', gravityResult, 502);
+    return c.json(gravityResult, 502);
   }
 
-  const fieldResult = await buildFieldGraph(traceResult, traceResult.simulation_context, {
-    network: body.network,
-    manifest: body.ecosystem,
-    txXdr: body.tx,
-  });
-
-  const gravityResult = scoreGravity(traceResult, fieldResult, { manifest: body.ecosystem });
   return c.json(gravityResult);
 });
 

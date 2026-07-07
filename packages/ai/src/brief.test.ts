@@ -12,6 +12,7 @@ vi.mock('@anthropic-ai/sdk', () => ({
 
 import { generateFallbackBrief, synthesizeBrief } from './brief.js';
 import type { BriefInput } from './brief.js';
+import { buildBriefCacheKey, clearBriefCache } from './cache.js';
 
 const baseInput: BriefInput = {
   verdict: 'ABORT',
@@ -76,6 +77,7 @@ describe('generateFallbackBrief', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     createMessageMock.mockReset();
+    clearBriefCache();
     delete process.env.ANTHROPIC_API_KEY;
   });
   it('includes verdict and confidence', () => {
@@ -121,8 +123,37 @@ describe('generateFallbackBrief', () => {
     process.env.ANTHROPIC_API_KEY = 'test-key';
     createMessageMock.mockRejectedValue(new Error('upstream failed'));
 
-    const result = await synthesizeBrief(baseInput, { apiKey: 'test-key' });
+    const result = await synthesizeBrief(baseInput, { apiKey: 'test-key', skipCache: true });
     expect(typeof result).toBe('object');
     expect(result).toMatchObject({ code: 'BRIEF_API_ERROR', layer: 'BRIEF' });
+  });
+
+  it('includes FIELD data in the Claude context payload', async () => {
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    createMessageMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'structured brief' }],
+    });
+
+    await synthesizeBrief(baseInput, { apiKey: 'test-key', skipCache: true });
+
+    const call = createMessageMock.mock.calls[0]?.[0];
+    const userContent = call.messages[0].content as string;
+    expect(userContent).toContain('"field"');
+    expect(userContent).toContain('"contracts_mapped": 1');
+  });
+
+  it('caches successful BRIEF synthesis results', async () => {
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    createMessageMock.mockResolvedValue({
+      content: [{ type: 'text', text: 'cached brief' }],
+    });
+
+    const first = await synthesizeBrief(baseInput, { apiKey: 'test-key' });
+    const second = await synthesizeBrief(baseInput, { apiKey: 'test-key' });
+
+    expect(first).toBe('cached brief');
+    expect(second).toBe('cached brief');
+    expect(createMessageMock).toHaveBeenCalledTimes(1);
+    expect(buildBriefCacheKey(baseInput)).toHaveLength(64);
   });
 });

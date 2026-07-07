@@ -192,6 +192,27 @@ function readAnalyzeOptions(
     else result.rpc_url = value.rpc_url.trim();
   }
 
+  const authMode = readOptionalEnum(
+    value.auth_mode,
+    `${path}.auth_mode`,
+    ['enforce', 'record', 'record_allow_nonroot'],
+    details,
+  );
+  if (authMode) result.auth_mode = authMode;
+
+  const fieldAuthMode = readOptionalEnum(
+    value.field_auth_mode,
+    `${path}.field_auth_mode`,
+    ['enforce', 'record', 'record_allow_nonroot'],
+    details,
+  );
+  if (fieldAuthMode) result.field_auth_mode = fieldAuthMode;
+
+  if (value.deep_discovery !== undefined) {
+    if (typeof value.deep_discovery !== 'boolean') details.push(`${path}.deep_discovery must be a boolean.`);
+    else result.deep_discovery = value.deep_discovery;
+  }
+
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
