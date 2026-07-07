@@ -1,52 +1,115 @@
 import { logger } from '../logger.js';
 import type {
   DependencyNode,
+  DependencyNodeSource,
   EcosystemManifest,
   FieldOptions,
   FieldResult,
   SimulationContext,
   TraceResult,
 } from '../types.js';
+import { checkTTLWarnings, extractFootprint, mergeSimulationContexts } from '../trace/parser.js';
+import {
+  fetchContractWasmHash,
+  fetchLedgerEntryTTLs,
+  resolveRpcUrl,
+  simulateTransaction,
+} from '../trace/rpc.js';
 
 /**
  * Build dependency graph from simulation footprint and optional ecosystem manifest.
- * Phase 1: footprint-based mapping with manifest enrichment.
+ * Performs TTL checks and optional record-mode re-simulation for deep discovery.
  *
  * @param trace - TRACE result with execution path and footprint
  * @param context - Simulation context with footprint contracts
- * @param options - Field options including optional manifest
+ * @param options - Field options including optional manifest and RPC settings
  * @returns Structured FieldResult
  */
-export function buildFieldGraph(
+export async function buildFieldGraph(
   trace: TraceResult,
   context: SimulationContext,
   options?: FieldOptions,
-): FieldResult {
-  logger.info('field:start', { contracts: context.footprintContracts.length });
+): Promise<FieldResult> {
+  const network = options?.network ?? 'testnet';
+  const rpcUrl = options?.rpcUrl ?? resolveRpcUrl(network);
+  const timeoutMs = options?.timeoutMs ?? 30_000;
+  const discoveryAuthMode = options?.deepDiscovery
+    ? 'record_allow_nonroot'
+    : (options?.authMode ?? 'record');
+
+  let mergedContext = context;
+  const contractSources = new Map<string, DependencyNodeSource>();
+
+  for (const address of context.footprintContracts) {
+    contractSources.set(address, 'footprint');
+  }
+  for (const step of trace.execution_path) {
+    if (step.contract_id) {
+      contractSources.set(step.contract_id, 'execution_path');
+    }
+  }
+
+  if (discoveryAuthMode !== 'enforce' && options?.txXdr) {
+    const recordSim = await simulateTransaction(options.txXdr, rpcUrl, {
+      network,
+      authMode: discoveryAuthMode,
+      timeoutMs,
+    });
+
+    if (!('layer' in recordSim) && recordSim.sorobanData) {
+      const recordContext = extractFootprint(
+        recordSim.sorobanData,
+        recordSim.simulationLedger,
+        recordSim.latestLedger,
+      );
+      mergedContext = mergeSimulationContexts(context, recordContext);
+      for (const address of recordContext.footprintContracts) {
+        if (!contractSources.has(address)) {
+          contractSources.set(address, 'record_discovery');
+        }
+      }
+    }
+  }
+
+  logger.info('field:start', { contracts: mergedContext.footprintContracts.length });
 
   const manifest = options?.manifest;
   const manifestLookup = buildManifestLookup(manifest);
-  const observedContracts = collectObservedContracts(trace, context);
+  const observedContracts = collectObservedContracts(trace, mergedContext);
   const contractDepths = buildContractDepths(observedContracts, manifestLookup);
 
-  const dependencyGraph: DependencyNode[] = [...contractDepths.entries()]
-    .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
-    .map(([address, depth]) => {
-      const manifestEntry = manifestLookup.get(address);
-      return {
-        address,
-        name: manifestEntry?.name,
-        dependencies: manifestEntry?.dependencies ?? [],
-        depth,
-      };
-    });
+  for (const address of manifestLookup.keys()) {
+    if (observedContracts.has(address) && !contractSources.has(address)) {
+      contractSources.set(address, 'manifest');
+    }
+  }
+
+  const dependencyGraph: DependencyNode[] = await Promise.all(
+    [...contractDepths.entries()]
+      .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+      .map(async ([address, depth]) => {
+        const manifestEntry = manifestLookup.get(address);
+        const wasmHash = await fetchContractWasmHash(rpcUrl, address, timeoutMs);
+        return {
+          address,
+          name: manifestEntry?.name,
+          dependencies: manifestEntry?.dependencies ?? [],
+          depth,
+          source: contractSources.get(address),
+          wasm_hash: wasmHash,
+        };
+      }),
+  );
 
   const manifestCoverage = computeManifestCoverage(observedContracts, manifest);
+  const ledgerKeys = [...new Set([...mergedContext.readOnly, ...mergedContext.readWrite])];
+  const entryTtls = await fetchLedgerEntryTTLs(rpcUrl, ledgerKeys, timeoutMs);
+  const ttlWarnings = checkTTLWarnings(ledgerKeys, mergedContext.ledgerSequence, entryTtls);
 
   return {
     contracts_mapped: dependencyGraph.length,
     dependency_graph: dependencyGraph,
-    ttl_warnings: [],
+    ttl_warnings: ttlWarnings,
     manifest_coverage: manifestCoverage,
   };
 }

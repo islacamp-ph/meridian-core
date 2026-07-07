@@ -5,10 +5,16 @@ vi.mock('./trace/index.js', () => ({
   trace: vi.fn(),
 }));
 
+vi.mock('./field/index.js', () => ({
+  buildFieldGraph: vi.fn(),
+}));
+
 import { analyze } from './analyze.js';
+import { buildFieldGraph } from './field/index.js';
 import { trace } from './trace/index.js';
 
 const mockedTrace = vi.mocked(trace);
+const mockedBuildFieldGraph = vi.mocked(buildFieldGraph);
 
 function makeTraceResult(): TraceResult {
   return {
@@ -39,10 +45,20 @@ function makeTraceResult(): TraceResult {
 describe('analyze', () => {
   beforeEach(() => {
     mockedTrace.mockReset();
+    mockedBuildFieldGraph.mockReset();
   });
 
   it('threads simulation ledger metadata into analyze response', async () => {
     mockedTrace.mockResolvedValue(makeTraceResult());
+    mockedBuildFieldGraph.mockResolvedValue({
+      contracts_mapped: 2,
+      dependency_graph: [
+        { address: 'CEXECUTION', dependencies: [], depth: 0 },
+        { address: 'CFOOTPRINT', dependencies: [], depth: 0 },
+      ],
+      ttl_warnings: [],
+      manifest_coverage: 0,
+    });
 
     const result = await analyze({ tx: 'AAAA', network: 'testnet' });
 

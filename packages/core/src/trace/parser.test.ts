@@ -1,6 +1,21 @@
-import { describe, it, expect } from 'vitest';
-import { parseExecutionPath, parseFailurePoint, parseSimulationResult } from './parser.js';
-import { computeVerdict, computeConfidence } from '../analyze.js';
+import { describe, expect, it } from 'vitest';
+import {
+  Account,
+  Address,
+  Contract,
+  Networks,
+  TransactionBuilder,
+  BASE_FEE,
+  xdr,
+} from '@stellar/stellar-sdk';
+import {
+  checkTTLWarnings,
+  extractResourceUsage,
+  parseExecutionPath,
+  parseFailurePoint,
+  parseSimulationResult,
+} from './parser.js';
+import { computeVerdict, computeConfidence, generateFixSequence } from '../analyze.js';
 import type { ExecutionStep } from '../types.js';
 
 describe('parseExecutionPath', () => {
@@ -14,6 +29,68 @@ describe('parseExecutionPath', () => {
   it('returns a fallback step for empty XDR', () => {
     const steps = parseExecutionPath('');
     expect(steps).toHaveLength(1);
+  });
+
+  it('parses invokeHostFunction with ScAddress contract IDs', () => {
+    const contractId = 'CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE';
+    const contract = new Contract(contractId);
+    const account = new Account('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', '1');
+    const tx = new TransactionBuilder(account, { fee: BASE_FEE })
+      .setNetworkPassphrase(Networks.TESTNET)
+      .setTimeout(30)
+      .addOperation(contract.call('increment'))
+      .build();
+
+    const steps = parseExecutionPath(tx.toXDR(), 'testnet');
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({
+      type: 'invoke',
+      contract_id: contractId,
+      function_name: 'increment',
+    });
+  });
+});
+
+describe('checkTTLWarnings', () => {
+  const contractId = 'CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE';
+  const ledgerKey = xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: Address.fromString(contractId).toScAddress(),
+      key: xdr.ScVal.scvSymbol('counter'),
+      durability: xdr.ContractDataDurability.persistent(),
+    }),
+  ).toXDR('base64');
+
+  it('flags expired entries as CRITICAL', () => {
+    const warnings = checkTTLWarnings([ledgerKey], 1000, [
+      { ledger_key: ledgerKey, live_until_ledger_seq: 999 },
+    ]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].severity).toBe('CRITICAL');
+    expect(warnings[0].ttl_remaining).toBe(-1);
+    expect(warnings[0].contract_id).toBe(contractId);
+  });
+
+  it('flags near-expiry entries as WARNING', () => {
+    const warnings = checkTTLWarnings([ledgerKey], 1000, [
+      { ledger_key: ledgerKey, live_until_ledger_seq: 100_050 },
+    ]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].severity).toBe('WARNING');
+  });
+
+  it('returns empty when TTL is healthy', () => {
+    const warnings = checkTTLWarnings([ledgerKey], 1000, [
+      { ledger_key: ledgerKey, live_until_ledger_seq: 2_000_000 },
+    ]);
+    expect(warnings).toHaveLength(0);
+  });
+});
+
+describe('extractResourceUsage', () => {
+  it('uses memoryBytes from simulation cost when provided', () => {
+    const usage = extractResourceUsage(undefined, 42_000);
+    expect(usage.memory_bytes).toBe(42_000);
   });
 });
 
@@ -55,6 +132,7 @@ describe('parseSimulationResult', () => {
         simulationLedger: 113,
         minResourceFee: '42',
         events: [],
+        memoryBytes: 8192,
         rpcMetrics: {
           simulate_transaction_ms: 5,
           get_latest_ledger_ms: 2,
@@ -69,6 +147,7 @@ describe('parseSimulationResult', () => {
     expect(result.simulation_context.ledgerSequence).toBe(113);
     expect(result.simulation_context.latestLedger).toBe(120);
     expect(result.staleness_warning).toBe(true);
+    expect(result.resource_usage.memory_bytes).toBe(8192);
   });
 
   it('does not flag fresh simulations as stale', () => {
@@ -143,5 +222,39 @@ describe('computeConfidence', () => {
     const noManifest = computeConfidence(true, 0, false);
     const withManifest = computeConfidence(true, 1.0, false);
     expect(withManifest).toBeGreaterThan(noManifest);
+  });
+});
+
+describe('generateFixSequence', () => {
+  it('returns undefined for CLEAR verdict', () => {
+    expect(generateFixSequence({ verdict: 'CLEAR', traceSuccess: true })).toBeUndefined();
+  });
+
+  it('returns fix steps for ABORT verdict', () => {
+    const steps = generateFixSequence({
+      verdict: 'ABORT',
+      traceSuccess: false,
+      failureErrorCode: 'AUTH_REQUIRED',
+    });
+    expect(steps?.some((step) => step.operation === 'fix_auth')).toBe(true);
+    expect(steps?.some((step) => step.operation === 'resimulate')).toBe(true);
+  });
+
+  it('returns fix steps for WARN verdict on stale simulation', () => {
+    const steps = generateFixSequence({
+      verdict: 'WARN',
+      traceSuccess: true,
+      warnings: ['Simulation ledger is stale (>5 ledgers behind latest)'],
+    });
+    expect(steps?.some((step) => step.operation === 'refresh_ledger')).toBe(true);
+  });
+
+  it('returns fix steps for WARN verdict on high blast radius', () => {
+    const steps = generateFixSequence({
+      verdict: 'WARN',
+      traceSuccess: true,
+      blastRadius: 75,
+    });
+    expect(steps?.some((step) => step.operation === 'review_scope')).toBe(true);
   });
 });

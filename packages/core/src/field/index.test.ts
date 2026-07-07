@@ -1,6 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildFieldGraph } from './index.js';
 import type { EcosystemManifest, SimulationContext, TraceResult } from '../types.js';
+
+vi.mock('../trace/rpc.js', () => ({
+  resolveRpcUrl: vi.fn(() => 'https://test.rpc'),
+  simulateTransaction: vi.fn(),
+  fetchLedgerEntryTTLs: vi.fn(async () => []),
+  fetchContractWasmHash: vi.fn(async () => undefined),
+}));
+
+import { simulateTransaction } from '../trace/rpc.js';
+
+const mockedSimulateTransaction = vi.mocked(simulateTransaction);
 
 function makeTraceResult(): TraceResult {
   return {
@@ -38,25 +49,66 @@ const manifest: EcosystemManifest = {
 };
 
 describe('buildFieldGraph', () => {
-  it('computes manifest coverage over observed contracts', () => {
+  beforeEach(() => {
+    mockedSimulateTransaction.mockReset();
+    mockedSimulateTransaction.mockResolvedValue({
+      success: true,
+      latestLedger: 1,
+      simulationLedger: 1,
+      minResourceFee: '0',
+      events: [],
+      rpcMetrics: {
+        simulate_transaction_ms: 1,
+        get_latest_ledger_ms: 1,
+        latest_ledger_fallback: false,
+        latest_ledger_timed_out: false,
+        timeout_ms: 30000,
+      },
+    });
+  });
+
+  it('computes manifest coverage over observed contracts', async () => {
     const trace = makeTraceResult();
     const context: SimulationContext = {
       ...trace.simulation_context,
       footprintContracts: ['CA', 'CEXTERNAL'],
     };
 
-    const result = buildFieldGraph(trace, context, { network: 'testnet', manifest });
+    const result = await buildFieldGraph(trace, context, {
+      network: 'testnet',
+      manifest,
+      txXdr: 'AAAA',
+    });
     expect(result.manifest_coverage).toBe(0.5);
   });
 
-  it('includes transitive manifest dependencies with depth', () => {
+  it('includes transitive manifest dependencies with depth', async () => {
     const trace = makeTraceResult();
-    const result = buildFieldGraph(trace, trace.simulation_context, { network: 'testnet', manifest });
+    const result = await buildFieldGraph(trace, trace.simulation_context, {
+      network: 'testnet',
+      manifest,
+      txXdr: 'AAAA',
+    });
 
     expect(result.dependency_graph).toEqual([
-      { address: 'CA', name: 'A', dependencies: ['CB'], depth: 0 },
-      { address: 'CB', name: 'B', dependencies: ['CC'], depth: 1 },
-      { address: 'CC', name: 'C', dependencies: [], depth: 2 },
+      { address: 'CA', name: 'A', dependencies: ['CB'], depth: 0, source: 'execution_path', wasm_hash: undefined },
+      { address: 'CB', name: 'B', dependencies: ['CC'], depth: 1, source: undefined, wasm_hash: undefined },
+      { address: 'CC', name: 'C', dependencies: [], depth: 2, source: undefined, wasm_hash: undefined },
     ]);
+  });
+
+  it('re-simulates with record auth mode when txXdr is provided', async () => {
+    const trace = makeTraceResult();
+    await buildFieldGraph(trace, trace.simulation_context, {
+      network: 'testnet',
+      manifest,
+      txXdr: 'AAAA',
+    });
+
+    expect(mockedSimulateTransaction).toHaveBeenCalledWith('AAAA', 'https://test.rpc', {
+      network: 'testnet',
+      authMode: 'record',
+      timeoutMs: 30000,
+    });
   });
 });

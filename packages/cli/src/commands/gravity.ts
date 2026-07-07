@@ -40,9 +40,11 @@ export function gravityCommand(): Command {
           failWithMeridianError(traceResult);
         }
 
-        const fieldResult = buildFieldGraph(traceResult, traceResult.simulation_context, {
+        const fieldResult = await buildFieldGraph(traceResult, traceResult.simulation_context, {
           network: options.network,
           manifest,
+          txXdr,
+          rpcUrl: options.rpcUrl,
         });
 
         const gravityResult = scoreGravity(traceResult, fieldResult, { manifest });
