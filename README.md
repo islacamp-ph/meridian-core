@@ -216,7 +216,11 @@ npm run dev --workspace=@meridian/api
 |---|---|---|
 | `GET`  | `/v1/health` | Health check |
 | `GET`  | `/v1/version` | Product and engine version |
+| `GET`  | `/v1/metrics` | In-memory observability snapshot (request counts, confidence distribution) |
+| `GET`  | `/v1/openapi.json` | OpenAPI 3.1 specification |
+| `GET`  | `/v1/docs` | Swagger UI (loads `/v1/openapi.json`) |
 | `POST` | `/v1/analyze` | Full TRACE + FIELD + GRAVITY + BRIEF analysis |
+| `POST` | `/v1/analyze/batch` | Batch TRACE + FIELD + GRAVITY analysis (no BRIEF per item) |
 | `POST` | `/v1/trace` | TRACE only |
 | `POST` | `/v1/field` | TRACE + FIELD |
 | `POST` | `/v1/gravity` | TRACE + FIELD + GRAVITY |
@@ -258,6 +262,20 @@ curl -X POST http://localhost:3000/v1/analyze \
 | `field_auth_mode` | `"enforce"` \| `"record"` \| `"record_allow_nonroot"` | `"record"` | Auth mode for FIELD dependency discovery |
 | `deep_discovery` | `boolean` | `false` | When `true`, FIELD uses `record_allow_nonroot` for deep ecosystem mapping |
 
+### API production features
+
+When configured via environment variables, the API enables:
+
+| Feature | Env var | Behavior |
+|---|---|---|
+| Auth | `MERIDIAN_API_KEY` | Requires `Authorization: Bearer <key>` or `X-Api-Key` on protected routes (`/v1/health`, `/v1/version`, `/v1/docs`, and `/v1/openapi.json` are public) |
+| Redis cache | `REDIS_URL` | Caches TRACE (60s), FIELD (300s), GRAVITY (60s), and full analyze responses (300s). Falls back to in-memory when unset |
+| Rate limiting | `MERIDIAN_RATE_LIMIT_PER_MINUTE` | Per-IP sliding window (default: 100 req/min) |
+| CORS | `CORS_ORIGINS` | Comma-separated allowed origins, or `*` (default) |
+| Body size | `MERIDIAN_MAX_BODY_BYTES` | Max `Content-Length` for POST bodies (default: 1 MiB) |
+
+BRIEF synthesis is cached in `@meridian/ai` for 300 seconds per unique analysis context.
+
 ## Docker
 
 Build and run the API server in a container from the repo root:
@@ -286,6 +304,11 @@ See [`.env.example`](.env.example) for the full template. Every variable can als
 | `STELLAR_RPC_TESTNET` | For testnet use | Soroban RPC endpoint for testnet |
 | `STELLAR_RPC_MAINNET` | For mainnet use | Soroban RPC endpoint for mainnet |
 | `ANTHROPIC_API_KEY` | No | Claude API key for BRIEF synthesis — falls back to a deterministic brief if unset |
+| `MERIDIAN_API_KEY` | No | API auth key; when set, required on protected routes |
+| `REDIS_URL` | No | Redis connection URL for API response caching |
+| `CORS_ORIGINS` | No | Allowed CORS origins (default: `*`) |
+| `MERIDIAN_RATE_LIMIT_PER_MINUTE` | No | Per-IP rate limit (default: `100`) |
+| `MERIDIAN_MAX_BODY_BYTES` | No | Max POST body size in bytes (default: `1048576`) |
 | `LOG_LEVEL` | No | `debug` \| `info` \| `warn` \| `error` (default: `info`) |
 | `PORT` | No | API server port (default: `3000`) |
 
