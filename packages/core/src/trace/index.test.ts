@@ -61,7 +61,16 @@ describe('trace', () => {
     await trace('AAAA', { network: 'mainnet' });
 
     expect(mockedResolveRpcUrl).toHaveBeenCalledWith('mainnet');
-    expect(mockedSimulateTransaction).toHaveBeenCalledWith('AAAA', 'https://mainnet.rpc', 30000);
+    expect(mockedSimulateTransaction).toHaveBeenCalledWith('AAAA', 'https://mainnet.rpc', {
+      network: 'mainnet',
+      authMode: 'enforce',
+      timeoutMs: 30000,
+    });
+    expect(mockedParseSimulationResult).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true }),
+      'AAAA',
+      'mainnet',
+    );
   });
 
   it('uses an explicit rpcUrl without resolving by network', async () => {
@@ -95,9 +104,13 @@ describe('trace', () => {
       },
     });
 
-    await trace('BBBB', { network: 'testnet', rpcUrl: 'https://custom.rpc' });
+    await trace('BBBB', { network: 'testnet', rpcUrl: 'https://custom.rpc', authMode: 'record' });
 
     expect(mockedResolveRpcUrl).not.toHaveBeenCalled();
-    expect(mockedSimulateTransaction).toHaveBeenCalledWith('BBBB', 'https://custom.rpc', 30000);
+    expect(mockedSimulateTransaction).toHaveBeenCalledWith('BBBB', 'https://custom.rpc', {
+      network: 'testnet',
+      authMode: 'record',
+      timeoutMs: 30000,
+    });
   });
 });

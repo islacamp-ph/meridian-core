@@ -254,9 +254,10 @@ app.post('/v1/field', validatedJsonBody('fieldBody', parseFieldRequest), async (
     return c.json(traceResult, 502);
   }
 
-  const fieldResult = buildFieldGraph(traceResult, traceResult.simulation_context, {
+  const fieldResult = await buildFieldGraph(traceResult, traceResult.simulation_context, {
     network: body.network,
     manifest: body.ecosystem,
+    txXdr: body.tx,
   });
 
   return c.json(fieldResult);
@@ -275,9 +276,10 @@ app.post('/v1/gravity', validatedJsonBody('gravityBody', parseGravityRequest), a
     return c.json(traceResult, 502);
   }
 
-  const fieldResult = buildFieldGraph(traceResult, traceResult.simulation_context, {
+  const fieldResult = await buildFieldGraph(traceResult, traceResult.simulation_context, {
     network: body.network,
     manifest: body.ecosystem,
+    txXdr: body.tx,
   });
 
   const gravityResult = scoreGravity(traceResult, fieldResult, { manifest: body.ecosystem });

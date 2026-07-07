@@ -6,3 +6,6 @@ dist/
 .env.local
 .DS_Store
 coverage/
+
+# Marketing site — local only, not published to the remote repo
+packages/web/
