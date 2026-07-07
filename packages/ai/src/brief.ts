@@ -8,13 +8,19 @@ import type {
   Verdict,
 } from '@meridian/core';
 import { createMeridianError } from '@meridian/core';
+import {
+  BRIEF_CACHE_TTL_MS,
+  buildBriefCacheKey,
+  getCachedBrief,
+  setCachedBrief,
+} from './cache.js';
 
 const BRIEF_MODEL = 'claude-sonnet-4-6';
 const MAX_BRIEF_WORDS = 300;
 
 const BRIEF_SYSTEM_PROMPT = `You are MERIDIAN BRIEF — a Stellar pre-execution risk synthesis engine.
 
-Your job: produce a structured mission briefing from TRACE and GRAVITY JSON inputs.
+Your job: produce a structured mission briefing from TRACE, FIELD, and GRAVITY JSON inputs.
 You must NEVER hallucinate contract names, addresses, ledger values, or user counts.
 Every specific fact must come from the provided structured data.
 
@@ -46,6 +52,10 @@ export interface BriefInput {
 export interface BriefOptions {
   apiKey?: string;
   maxWords?: number;
+  /** Skip BRIEF cache lookup and storage */
+  skipCache?: boolean;
+  /** BRIEF cache TTL in milliseconds (default: 300s) */
+  cacheTtlMs?: number;
 }
 
 /**
@@ -123,28 +133,8 @@ export function generateFallbackBrief(input: BriefInput): string {
   return truncateToWordLimit(lines.join('\n'), MAX_BRIEF_WORDS);
 }
 
-/**
- * Synthesize a plain-language risk brief using Claude claude-sonnet-4-6.
- * Grounded strictly in TRACE + GRAVITY structured outputs.
- *
- * @param input - Brief synthesis input with layer results
- * @param options - Optional API key and word limit
- * @returns Brief string or MeridianError
- */
-export async function synthesizeBrief(
-  input: BriefInput,
-  options?: BriefOptions,
-): Promise<string | MeridianError> {
-  const apiKey = options?.apiKey ?? process.env.ANTHROPIC_API_KEY;
-  const maxWords = options?.maxWords ?? MAX_BRIEF_WORDS;
-
-  if (!apiKey) {
-    return generateFallbackBrief(input);
-  }
-
-  const client = new Anthropic({ apiKey });
-
-  const contextPayload = {
+function buildBriefContextPayload(input: BriefInput) {
+  return {
     verdict: input.verdict,
     confidence: input.confidence,
     trace: {
@@ -154,6 +144,12 @@ export async function synthesizeBrief(
       auth_entries: input.trace.auth_entries,
       fee_estimate: input.trace.fee_estimate,
       staleness_warning: input.trace.staleness_warning,
+    },
+    field: {
+      contracts_mapped: input.field.contracts_mapped,
+      dependency_graph: input.field.dependency_graph,
+      ttl_warnings: input.field.ttl_warnings,
+      manifest_coverage: input.field.manifest_coverage,
     },
     gravity: {
       blast_radius: input.gravity.blast_radius,
@@ -166,6 +162,40 @@ export async function synthesizeBrief(
     fix_sequence: input.fix_sequence,
     warnings: input.warnings,
   };
+}
+
+/**
+ * Synthesize a plain-language risk brief using Claude claude-sonnet-4-6.
+ * Grounded strictly in TRACE + FIELD + GRAVITY structured outputs.
+ *
+ * @param input - Brief synthesis input with layer results
+ * @param options - Optional API key and word limit
+ * @returns Brief string or MeridianError
+ */
+export async function synthesizeBrief(
+  input: BriefInput,
+  options?: BriefOptions,
+): Promise<string | MeridianError> {
+  const apiKey = options?.apiKey ?? process.env.ANTHROPIC_API_KEY;
+  const maxWords = options?.maxWords ?? MAX_BRIEF_WORDS;
+  const cacheTtlMs = options?.cacheTtlMs ?? BRIEF_CACHE_TTL_MS;
+  const cacheKey = buildBriefCacheKey(input);
+
+  if (!options?.skipCache) {
+    const cached = getCachedBrief(cacheKey);
+    if (cached) return cached;
+  }
+
+  if (!apiKey) {
+    const fallback = generateFallbackBrief(input);
+    if (!options?.skipCache) {
+      setCachedBrief(cacheKey, fallback, cacheTtlMs);
+    }
+    return fallback;
+  }
+
+  const client = new Anthropic({ apiKey });
+  const contextPayload = buildBriefContextPayload(input);
 
   try {
     const response = await client.messages.create({
@@ -190,7 +220,11 @@ export async function synthesizeBrief(
       );
     }
 
-    return truncateToWordLimit(textBlock.text, maxWords);
+    const brief = truncateToWordLimit(textBlock.text, maxWords);
+    if (!options?.skipCache) {
+      setCachedBrief(cacheKey, brief, cacheTtlMs);
+    }
+    return brief;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return createMeridianError(
