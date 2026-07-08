@@ -1,0 +1,164 @@
+name: MERIDIAN Analysis
+description: Pre-execution intelligence for Stellar transactions in CI
+author: MERIDIAN
+
+inputs:
+  tx:
+    description: Base64-encoded transaction XDR to analyze
+    required: false
+  tx-file:
+    description: Path to a file containing the transaction XDR
+    required: false
+  network:
+    description: Stellar network (mainnet or testnet)
+    required: false
+    default: testnet
+  ecosystem-manifest:
+    description: Path to an ecosystem manifest JSON file
+    required: false
+  fail-on:
+    description: Minimum verdict severity that fails the step (ABORT or WARN)
+    required: false
+    default: ABORT
+  api-url:
+    description: MERIDIAN API base URL (uses CLI locally when unset)
+    required: false
+  api-key:
+    description: MERIDIAN API key for authenticated deployments
+    required: false
+  no-brief:
+    description: Skip GenAI brief synthesis
+    required: false
+    default: 'true'
+
+outputs:
+  verdict:
+    description: Analysis verdict (CLEAR, WARN, or ABORT)
+    value: ${{ steps.analyze.outputs.verdict }}
+  confidence:
+    description: Analysis confidence score (0-1)
+    value: ${{ steps.analyze.outputs.confidence }}
+  brief:
+    description: Plain-language risk brief
+    value: ${{ steps.analyze.outputs.brief }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Install meridian-core CLI
+      shell: bash
+      run: npm install -g meridian-core
+
+    - name: Run MERIDIAN analysis
+      id: analyze
+      shell: bash
+      env:
+        TX: ${{ inputs.tx }}
+        TX_FILE: ${{ inputs.tx-file }}
+        NETWORK: ${{ inputs.network }}
+        ECOSYSTEM: ${{ inputs.ecosystem-manifest }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        API_URL: ${{ inputs.api-url }}
+        API_KEY: ${{ inputs.api-key }}
+        NO_BRIEF: ${{ inputs.no-brief }}
+      run: |
+        set -euo pipefail
+
+        TX_ARG=""
+        if [ -n "${TX_FILE:-}" ]; then
+          TX_ARG="--file ${TX_FILE}"
+        elif [ -n "${TX:-}" ]; then
+          TX_ARG="${TX}"
+        else
+          echo "Either tx or tx-file input is required" >&2
+          exit 1
+        fi
+
+        ECOSYSTEM_FLAG=""
+        if [ -n "${ECOSYSTEM:-}" ]; then
+          ECOSYSTEM_FLAG="--ecosystem ${ECOSYSTEM}"
+        fi
+
+        NO_BRIEF_FLAG=""
+        if [ "${NO_BRIEF:-true}" = "true" ]; then
+          NO_BRIEF_FLAG="--no-brief"
+        fi
+
+        if [ -n "${API_URL:-}" ]; then
+          BODY=$(jq -n \
+            --arg tx "${TX:-}" \
+            --arg network "${NETWORK}" \
+            '{tx: $tx, network: $network}')
+
+          if [ -n "${TX_FILE:-}" ]; then
+            TX_CONTENT=$(cat "${TX_FILE}")
+            BODY=$(jq -n \
+              --arg tx "${TX_CONTENT}" \
+              --arg network "${NETWORK}" \
+              '{tx: $tx, network: $network}')
+          fi
+
+          AUTH_HEADER=()
+          if [ -n "${API_KEY:-}" ]; then
+            AUTH_HEADER=(-H "Authorization: Bearer ${API_KEY}")
+          fi
+
+          RESULT=$(curl -sf -X POST "${API_URL%/}/v1/analyze" \
+            -H "Content-Type: application/json" \
+            "${AUTH_HEADER[@]}" \
+            -d "${BODY}")
+        else
+          RESULT=$(meridian analyze ${TX_ARG} --network "${NETWORK}" ${ECOSYSTEM_FLAG} ${NO_BRIEF_FLAG} --json)
+        fi
+
+        VERDICT=$(echo "${RESULT}" | jq -r '.verdict')
+        CONFIDENCE=$(echo "${RESULT}" | jq -r '.confidence')
+        BRIEF=$(echo "${RESULT}" | jq -r '.brief // empty')
+
+        echo "verdict=${VERDICT}" >> "${GITHUB_OUTPUT}"
+        echo "confidence=${CONFIDENCE}" >> "${GITHUB_OUTPUT}"
+        {
+          echo "brief<<EOF"
+          echo "${BRIEF}"
+          echo "EOF"
+        } >> "${GITHUB_OUTPUT}"
+
+        echo "## MERIDIAN Analysis" >> "${GITHUB_STEP_SUMMARY}"
+        echo "" >> "${GITHUB_STEP_SUMMARY}"
+        echo "| Field | Value |" >> "${GITHUB_STEP_SUMMARY}"
+        echo "|---|---|" >> "${GITHUB_STEP_SUMMARY}"
+        echo "| Verdict | **${VERDICT}** |" >> "${GITHUB_STEP_SUMMARY}"
+        echo "| Confidence | ${CONFIDENCE} |" >> "${GITHUB_STEP_SUMMARY}"
+        if [ -n "${BRIEF}" ]; then
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "### Brief" >> "${GITHUB_STEP_SUMMARY}"
+          echo "${BRIEF}" >> "${GITHUB_STEP_SUMMARY}"
+        fi
+
+        case "${FAIL_ON}" in
+          ABORT)
+            if [ "${VERDICT}" = "ABORT" ]; then
+              echo "MERIDIAN verdict is ABORT — failing step" >&2
+              exit 1
+            fi
+            ;;
+          WARN)
+            if [ "${VERDICT}" = "ABORT" ] || [ "${VERDICT}" = "WARN" ]; then
+              echo "MERIDIAN verdict is ${VERDICT} — failing step" >&2
+              exit 1
+            fi
+            ;;
+          *)
+            echo "Unknown fail-on value: ${FAIL_ON} (use ABORT or WARN)" >&2
+            exit 1
+            ;;
+        esac
+
+branding:
+  icon: shield
+  color: blue

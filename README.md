@@ -322,10 +322,19 @@ See [`.env.example`](.env.example) for the full template. Every variable can als
 
 ```
 packages/
-├── core/    TRACE + FIELD + GRAVITY engines
-├── ai/      BRIEF GenAI synthesis (Claude)
-├── api/     REST API server (Hono)
-└── cli/     meridian / meridian-core command-line interface
+├── core/           TRACE + FIELD + GRAVITY engines
+├── ai/             BRIEF GenAI synthesis (Claude)
+├── api/            REST API server (Hono)
+├── cli/            meridian / meridian-core CLI
+├── sdk-js/         @meridian/stellar JavaScript SDK
+├── sdk-py/         meridian-py Python SDK
+└── meridian-action GitHub Action for CI
+
+apps/
+└── docs/           Starlight documentation site
+
+manifests/          Community ecosystem manifest library
+examples/           Canonical analysis scenarios
 ```
 
 `packages/web/` is a local marketing site and is excluded from the published workspace (see `.gitignore`).
@@ -368,14 +377,26 @@ Each package can also be built, tested, and typechecked independently from its o
 **Phase 2 — Production Hardening** *(in progress)*
 - [x] Network-aware RPC simulation (mainnet/testnet passphrases)
 - [x] Soroban auth modes (`enforce`, `record`, `record_allow_nonroot`)
-- [x] TTL / archival checks via `getLedgerEntries`
+- [x] TTL / archival checks via `getLedgerEntries` (batched, graceful degradation)
 - [x] Enriched execution path (invoke, read, write, auth steps)
 - [x] `memory_bytes` from simulation cost
 - [x] Recovery assessment (`FULL` / `PARTIAL` / `NONE`)
 - [x] Fix sequences on `WARN` and `ABORT` verdicts
 - [x] FIELD deep discovery with record-mode re-simulation and on-chain WASM hashes
-- [ ] End-to-end validation with ScholarSeal canonical test case
+- [x] ScholarSeal canonical test case (`examples/scholar-seal/`)
 - [ ] CLI flags for `auth_mode`, `field_auth_mode`, and `deep_discovery`
+
+**Phase 3 — Developer Access** *(in progress)*
+- [x] `packages/cli/` — `meridian-core` CLI (published to npm)
+- [x] `packages/sdk-js/` — `@meridian/stellar` JavaScript SDK
+- [x] `packages/sdk-py/` — `meridian-py` Python SDK
+- [ ] npm / PyPI publish for SDKs
+
+**Phase 4 — Ecosystem** *(in progress)*
+- [x] `packages/meridian-action/` — GitHub Action for CI
+- [x] `apps/docs/` — Starlight documentation site
+- [x] `manifests/` — community ecosystem manifest library
+- [x] `examples/` — canonical analysis scenarios
 
 ## License
 

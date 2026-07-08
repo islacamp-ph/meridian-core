@@ -1,0 +1,37 @@
+{
+  "name": "scholar-seal",
+  "version": "1.0.0",
+  "contracts": [
+    {
+      "name": "scholarship-registry",
+      "address": "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE",
+      "network": "testnet",
+      "dependencies": [],
+      "active_users": 1250,
+      "criticality": "HIGH",
+      "role": "registry"
+    },
+    {
+      "name": "disbursement-vault",
+      "address": "CBIELTK6Y5CY5XIKJNPJPTKDCHGD2GUYS5R7MJVQIKQRKMVVFFKHTV6",
+      "network": "testnet",
+      "dependencies": [
+        "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE"
+      ],
+      "active_users": 890,
+      "criticality": "HIGH",
+      "role": "vault"
+    },
+    {
+      "name": "credential-verifier",
+      "address": "CC7QCYV53HC4S3CZSULHZF7UKIWHY32X3CLJQ7AAPADDCP2ITT7H3IB",
+      "network": "testnet",
+      "dependencies": [
+        "CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE"
+      ],
+      "active_users": 2100,
+      "criticality": "MEDIUM",
+      "role": "verifier"
+    }
+  ]
+}

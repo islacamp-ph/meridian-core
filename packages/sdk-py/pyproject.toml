@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "meridian-py"
+version = "0.1.0"
+description = "Python SDK for MERIDIAN — pre-execution intelligence for Stellar"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["stellar", "soroban", "meridian", "smart-contracts"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+  "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "pytest-httpx>=0.30.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["meridian"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

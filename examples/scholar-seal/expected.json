@@ -1,0 +1,16 @@
+{
+  "description": "ScholarSeal canonical e2e validation schema",
+  "network": "testnet",
+  "manifest": "manifests/scholar-seal/manifest.json",
+  "assertions": {
+    "verdict": { "oneOf": ["CLEAR", "WARN", "ABORT"] },
+    "field.contracts_mapped": { "min": 1 },
+    "gravity.blast_radius": { "min": 0, "max": 100 },
+    "trace.success": { "type": "boolean" }
+  },
+  "e2e": {
+    "enabled": false,
+    "expected_verdict": "CLEAR",
+    "min_contracts_mapped": 1
+  }
+}

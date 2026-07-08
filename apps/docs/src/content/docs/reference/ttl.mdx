@@ -1,0 +1,46 @@
+---
+title: TTL & Archival
+description: Ledger entry TTL checks and archival warnings
+---
+
+FIELD checks TTL (time-to-live) metadata for footprint ledger entries via the Soroban RPC `getLedgerEntries` method.
+
+## How it works
+
+1. TRACE simulation produces a footprint with `readOnly` and `readWrite` ledger keys.
+2. FIELD calls `getLedgerEntries` for each unique key (batched in groups of 100).
+3. Each entry's `liveUntilLedgerSeq` is compared against the current ledger sequence.
+4. Warnings are emitted for contract data entries approaching or past expiry.
+
+## Warning thresholds
+
+| Condition | Severity |
+|---|---|
+| `ttl_remaining <= 0` | `CRITICAL` — entry archived or expired |
+| `ttl_remaining < 100,000` ledgers | `WARNING` — nearing archival |
+| Healthy TTL | No warning |
+
+## Response shape
+
+```json
+{
+  "field": {
+    "ttl_warnings": [
+      {
+        "contract_id": "CABC...",
+        "ledger_key": "<base64-xdr>",
+        "ttl_remaining": 50000,
+        "severity": "WARNING"
+      }
+    ]
+  }
+}
+```
+
+## Recovery impact
+
+GRAVITY uses TTL `CRITICAL` warnings and `ENTRY_ARCHIVED` simulation failures to set recovery to `NONE`. Partial TTL warnings contribute to `PARTIAL` recovery.
+
+## Resilience
+
+TTL fetches are batched and degrade gracefully — if a batch fails, FIELD continues with partial TTL data rather than failing the entire analysis.

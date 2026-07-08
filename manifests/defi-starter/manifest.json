@@ -1,0 +1,26 @@
+{
+  "name": "defi-starter",
+  "version": "1.0.0",
+  "contracts": [
+    {
+      "name": "amm-pool",
+      "address": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVUHGGFX5GE",
+      "network": "testnet",
+      "dependencies": [],
+      "active_users": 5400,
+      "criticality": "HIGH",
+      "role": "liquidity-pool"
+    },
+    {
+      "name": "swap-router",
+      "address": "CAY6GXI3MP5YCNP5R3TAOSFHZYU4T4U4CE2KTX2ROXLALW7RXY2JBLV",
+      "network": "testnet",
+      "dependencies": [
+        "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVUHGGFX5GE"
+      ],
+      "active_users": 3200,
+      "criticality": "HIGH",
+      "role": "router"
+    }
+  ]
+}

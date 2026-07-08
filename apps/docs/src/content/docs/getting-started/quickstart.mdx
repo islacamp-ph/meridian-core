@@ -1,0 +1,63 @@
+---
+title: Quickstart
+description: Run your first MERIDIAN analysis in minutes
+---
+
+## Install the CLI
+
+```bash
+npm install -g meridian-core
+meridian --help
+```
+
+## Analyze a transaction
+
+```bash
+meridian analyze <base64-xdr> --network testnet
+```
+
+Pipe from a file:
+
+```bash
+cat tx.xdr | meridian analyze --network testnet --json
+```
+
+## Use the REST API
+
+```bash
+npm run dev --workspace=@meridian/api
+```
+
+```bash
+curl -X POST http://localhost:3000/v1/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"tx": "<base64-xdr>", "network": "testnet"}'
+```
+
+## Use the JavaScript SDK
+
+```bash
+npm install @meridian/stellar
+```
+
+```typescript
+import { MeridianClient } from '@meridian/stellar';
+
+const client = new MeridianClient({ baseUrl: 'http://localhost:3000' });
+const result = await client.analyze({ tx: '<base64-xdr>', network: 'testnet' });
+console.log(result.verdict, result.brief);
+```
+
+## Use the Python SDK
+
+```bash
+pip install meridian-py
+```
+
+```python
+from meridian import MeridianClient
+
+client = MeridianClient("http://localhost:3000")
+result = client.analyze({"tx": "<base64-xdr>", "network": "testnet"})
+print(result["verdict"])
+```

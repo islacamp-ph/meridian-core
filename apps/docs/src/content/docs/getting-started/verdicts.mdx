@@ -1,0 +1,26 @@
+---
+title: Verdicts
+description: Understanding CLEAR, WARN, and ABORT
+---
+
+MERIDIAN returns one of three verdicts after running the full analysis pipeline.
+
+## CLEAR
+
+The transaction is predicted to succeed with no critical risks. Confidence must meet the configured threshold (default 0.75) for a `CLEAR` verdict.
+
+## WARN
+
+The transaction may succeed but carries advisory risks — TTL warnings, low confidence, staleness, or elevated blast radius. Review the `warnings` array and `fix_sequence` before submitting.
+
+## ABORT
+
+A critical failure is predicted — auth failure, archived entry, simulation error, or catastrophic blast radius. Do not submit without remediation.
+
+## Confidence
+
+Confidence (0–1) reflects simulation quality, manifest coverage, and evidence strength. The `meta.confidence_bucket` field classifies it as `LOW`, `MEDIUM`, or `HIGH`.
+
+## Fix sequences
+
+On `WARN` and `ABORT` verdicts, MERIDIAN returns a numbered `fix_sequence` with remediation steps, estimated cost in stroops, and estimated time.

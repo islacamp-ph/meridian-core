@@ -1,0 +1,12 @@
+{
+  "description": "TTL expiry warning validation schema",
+  "network": "testnet",
+  "assertions": {
+    "verdict": { "oneOf": ["CLEAR", "WARN", "ABORT"] },
+    "field.ttl_warnings": { "minLength": 0 }
+  },
+  "e2e": {
+    "enabled": false,
+    "expect_ttl_warnings": true
+  }
+}

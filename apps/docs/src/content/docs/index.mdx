@@ -1,0 +1,23 @@
+---
+title: MERIDIAN
+description: Pre-execution intelligence for Stellar developers
+---
+
+MERIDIAN sits between your code and the Stellar network. Before any transaction submits, it simulates end-to-end, maps every contract it touches downstream, scores what breaks if something goes wrong, and returns a plain-language risk brief.
+
+## Pipeline
+
+| Layer | What it does |
+|---|---|
+| **TRACE** | Simulates the transaction against Soroban RPC and parses the execution path |
+| **FIELD** | Maps contract dependencies, checks TTL/archival risk, enriches WASM hashes |
+| **GRAVITY** | Scores blast radius with evidence-based factors and recovery assessment |
+| **BRIEF** | Synthesizes a grounded, plain-language risk briefing |
+
+## Verdicts
+
+| Verdict | Meaning |
+|---|---|
+| `CLEAR` | Safe to submit |
+| `WARN` | Submit with caution — review warnings and fix sequence |
+| `ABORT` | Do not submit — critical failure predicted |

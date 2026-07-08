@@ -1,0 +1,55 @@
+---
+title: GitHub Action
+description: Run MERIDIAN analysis in CI
+---
+
+The `meridian-action` composite action runs MERIDIAN analysis in GitHub Actions workflows.
+
+## Basic usage
+
+```yaml
+- uses: ./packages/meridian-action
+  with:
+    tx-file: tx.xdr
+    network: testnet
+    fail-on: ABORT
+```
+
+## With ecosystem manifest
+
+```yaml
+- uses: ./packages/meridian-action
+  with:
+    tx-file: examples/scholar-seal/tx.xdr
+    network: testnet
+    ecosystem-manifest: manifests/scholar-seal/manifest.json
+    fail-on: WARN
+```
+
+## Against a hosted API
+
+```yaml
+- uses: ./packages/meridian-action
+  with:
+    tx: ${{ secrets.TX_XDR }}
+    network: mainnet
+    api-url: https://api.example.com
+    api-key: ${{ secrets.MERIDIAN_API_KEY }}
+```
+
+## Outputs
+
+```yaml
+- uses: ./packages/meridian-action
+  id: meridian
+  with:
+    tx-file: tx.xdr
+
+- run: echo "Verdict was ${{ steps.meridian.outputs.verdict }}"
+```
+
+| Output | Description |
+|---|---|
+| `verdict` | `CLEAR`, `WARN`, or `ABORT` |
+| `confidence` | Confidence score (0–1) |
+| `brief` | Plain-language risk brief |
