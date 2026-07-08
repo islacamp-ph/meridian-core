@@ -58,6 +58,7 @@ describe('analyze', () => {
       ],
       ttl_warnings: [],
       manifest_coverage: 0,
+      upgrade_warnings: [],
     });
 
     const result = await analyze({ tx: 'AAAA', network: 'testnet' });

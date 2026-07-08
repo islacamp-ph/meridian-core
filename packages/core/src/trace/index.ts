@@ -6,11 +6,13 @@ import { resolveRpcUrl, simulateTransaction } from './rpc.js';
 
 export {
   parseExecutionPath,
+  parseExecutionPathFromDiagnostics,
   parseSimulationResult,
   extractFootprint,
   mergeSimulationContexts,
   checkTTLWarnings,
   enrichExecutionPath,
+  attachFootprintLedgerKeys,
 } from './parser.js';
 export { resolveNetworkPassphrase, parseTransactionFromXdr } from './network.js';
 export {
