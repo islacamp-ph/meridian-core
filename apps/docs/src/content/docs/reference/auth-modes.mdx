@@ -1,0 +1,44 @@
+---
+title: Simulation Auth Modes
+description: Soroban simulateTransaction auth modes in MERIDIAN
+---
+
+Soroban `simulateTransaction` supports three auth modes. MERIDIAN uses them strategically across layers.
+
+| Mode | Used by | Purpose |
+|---|---|---|
+| `enforce` | TRACE (default) | Production analysis — strict authorization checking |
+| `record` | FIELD (default) | Dependency discovery — records auth entries without enforcing |
+| `record_allow_nonroot` | FIELD (`deep_discovery: true`) | Deep ecosystem mapping — allows non-root authorization paths |
+
+## Configuration
+
+Via REST API `options`:
+
+```json
+{
+  "options": {
+    "auth_mode": "enforce",
+    "field_auth_mode": "record",
+    "deep_discovery": false
+  }
+}
+```
+
+Via `@meridian/core` directly:
+
+```typescript
+await analyze({
+  tx: '<xdr>',
+  network: 'testnet',
+  options: {
+    auth_mode: 'enforce',
+    field_auth_mode: 'record',
+    deep_discovery: true,
+  },
+});
+```
+
+## When to use deep discovery
+
+Enable `deep_discovery` when you need transitive contract mapping beyond the transaction footprint — for example, mapping an entire DeFi stack from a single entry-point call.

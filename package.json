@@ -7,14 +7,18 @@
     "packages/core",
     "packages/ai",
     "packages/api",
-    "packages/cli"
+    "packages/cli",
+    "packages/sdk-js",
+    "apps/docs"
   ],
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
     "test": "turbo run test",
     "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck"
+    "typecheck": "turbo run typecheck",
+    "validate:manifests": "node scripts/validate-manifests.mjs",
+    "validate:examples": "node scripts/validate-examples.mjs"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

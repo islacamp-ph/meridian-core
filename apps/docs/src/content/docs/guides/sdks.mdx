@@ -1,0 +1,61 @@
+---
+title: SDKs
+description: JavaScript and Python client libraries
+---
+
+## JavaScript — `@meridian/stellar`
+
+```bash
+npm install @meridian/stellar
+```
+
+### HTTP client
+
+```typescript
+import { MeridianClient } from '@meridian/stellar';
+
+const client = new MeridianClient({
+  baseUrl: 'https://api.example.com',
+  apiKey: 'optional-key',
+});
+
+const result = await client.analyze({
+  tx: '<base64-xdr>',
+  network: 'testnet',
+});
+```
+
+### Local engines
+
+For offline analysis, import engines directly:
+
+```typescript
+import { analyze, trace, buildFieldGraph, scoreGravity } from '@meridian/stellar';
+
+const result = await analyze({
+  tx: '<base64-xdr>',
+  network: 'testnet',
+});
+```
+
+## Python — `meridian-py`
+
+```bash
+pip install meridian-py
+```
+
+```python
+from meridian import MeridianClient
+
+with MeridianClient("http://localhost:3000") as client:
+    result = client.analyze({"tx": "<base64-xdr>", "network": "testnet"})
+    print(result["verdict"])
+```
+
+## Publishing
+
+| Package | npm / PyPI name |
+|---|---|
+| CLI | `meridian-core` |
+| JavaScript SDK | `@meridian/stellar` |
+| Python SDK | `meridian-py` |

@@ -1,0 +1,12 @@
+{
+  "description": "Auth failure validation schema",
+  "network": "testnet",
+  "assertions": {
+    "verdict": { "oneOf": ["ABORT"] },
+    "trace.success": { "equals": false }
+  },
+  "e2e": {
+    "enabled": false,
+    "expected_verdict": "ABORT"
+  }
+}

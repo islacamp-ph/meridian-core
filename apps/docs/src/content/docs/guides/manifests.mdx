@@ -1,0 +1,54 @@
+---
+title: Ecosystem Manifests
+description: Describe known contracts for richer dependency mapping
+---
+
+An ecosystem manifest is a JSON file describing known contracts in your deployment. FIELD and GRAVITY use it to enrich dependency graphs, blast-radius scoring, and affected-user counts.
+
+## Schema
+
+```json
+{
+  "name": "my-ecosystem",
+  "version": "1.0.0",
+  "contracts": [
+    {
+      "name": "token-vault",
+      "address": "CABC...XYZ",
+      "network": "testnet",
+      "dependencies": ["CDEF...UVW"],
+      "active_users": 4200,
+      "criticality": "HIGH",
+      "role": "vault"
+    }
+  ]
+}
+```
+
+## Fields
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | Yes | Ecosystem identifier |
+| `version` | Yes | Manifest semver |
+| `contracts[].name` | Yes | Human-readable contract name |
+| `contracts[].address` | Yes | Contract address (C... strkey) |
+| `contracts[].network` | Yes | `mainnet` or `testnet` |
+| `contracts[].dependencies` | No | Other contract addresses this contract calls |
+| `contracts[].active_users` | No | Estimated active users (for blast radius) |
+| `contracts[].criticality` | No | `HIGH`, `MEDIUM`, or `LOW` |
+| `contracts[].role` | No | Free-text role description |
+
+## Community library
+
+Shared manifests live in the repository `manifests/` directory. Validate them with:
+
+```bash
+meridian manifest validate manifests/<ecosystem>/manifest.json
+```
+
+## Scaffold a new manifest
+
+```bash
+meridian init --name my-ecosystem --network testnet
+```

@@ -11,6 +11,8 @@ import type { LedgerEntryTTL, MeridianError, Network, RpcMetrics, SimulationAuth
 import { parseTransactionFromXdr } from './network.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+/** Soroban RPC getLedgerEntries batch size (keys per request). */
+const LEDGER_ENTRY_BATCH_SIZE = 100;
 
 export interface RawSimulationResult {
   success: boolean;
@@ -286,16 +288,15 @@ export async function simulateTransaction(
  * @param timeoutMs - Request timeout in milliseconds
  * @returns TTL metadata per ledger key
  */
-export async function fetchLedgerEntryTTLs(
-  rpcUrl: string,
+/**
+ * Fetch TTL metadata for a single batch of ledger keys.
+ */
+async function fetchLedgerEntryTTLBatch(
+  server: rpc.Server,
   ledgerKeys: string[],
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  timeoutMs: number,
 ): Promise<LedgerEntryTTL[]> {
-  if (ledgerKeys.length === 0) return [];
-
-  const server = createRpcServer(rpcUrl);
   const keys = ledgerKeys.map((key) => xdr.LedgerKey.fromXDR(key, 'base64'));
-
   const response = await withTimeout(
     server.getLedgerEntries(...keys),
     timeoutMs,
@@ -306,6 +307,34 @@ export async function fetchLedgerEntryTTLs(
     ledger_key: entry.key.toXDR('base64'),
     live_until_ledger_seq: entry.liveUntilLedgerSeq,
   }));
+}
+
+export async function fetchLedgerEntryTTLs(
+  rpcUrl: string,
+  ledgerKeys: string[],
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<LedgerEntryTTL[]> {
+  if (ledgerKeys.length === 0) return [];
+
+  const server = createRpcServer(rpcUrl);
+  const uniqueKeys = [...new Set(ledgerKeys)];
+  const results: LedgerEntryTTL[] = [];
+
+  for (let offset = 0; offset < uniqueKeys.length; offset += LEDGER_ENTRY_BATCH_SIZE) {
+    const batch = uniqueKeys.slice(offset, offset + LEDGER_ENTRY_BATCH_SIZE);
+    try {
+      const batchResults = await fetchLedgerEntryTTLBatch(server, batch, timeoutMs);
+      results.push(...batchResults);
+    } catch (err) {
+      logger.warn('fetchLedgerEntryTTLs:batch_failed', {
+        batchIndex: Math.floor(offset / LEDGER_ENTRY_BATCH_SIZE),
+        batchSize: batch.length,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return results;
 }
 
 /**

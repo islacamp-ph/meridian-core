@@ -1,0 +1,43 @@
+---
+title: REST API
+description: HTTP endpoints for MERIDIAN analysis
+---
+
+## Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/health` | Health check |
+| `GET` | `/v1/version` | Product version |
+| `GET` | `/v1/metrics` | Observability snapshot |
+| `GET` | `/v1/openapi.json` | OpenAPI 3.1 spec |
+| `GET` | `/v1/docs` | Swagger UI |
+| `POST` | `/v1/analyze` | Full analysis with brief |
+| `POST` | `/v1/analyze/batch` | Batch analysis (no brief) |
+| `POST` | `/v1/trace` | TRACE only |
+| `POST` | `/v1/field` | TRACE + FIELD |
+| `POST` | `/v1/gravity` | TRACE + FIELD + GRAVITY |
+
+## Analyze request
+
+```json
+{
+  "tx": "<base64-xdr>",
+  "network": "testnet",
+  "ecosystem": { "name": "my-ecosystem", "version": "1.0.0", "contracts": [] },
+  "options": {
+    "auth_mode": "enforce",
+    "field_auth_mode": "record",
+    "deep_discovery": false,
+    "confidence_threshold": 0.75
+  }
+}
+```
+
+## Authentication
+
+When `MERIDIAN_API_KEY` is set on the server, protected routes require `Authorization: Bearer <key>` or `X-Api-Key: <key>`.
+
+## Interactive docs
+
+Start the API server and visit `/v1/docs` for Swagger UI, or fetch `/v1/openapi.json` for the machine-readable spec.

@@ -1,0 +1,37 @@
+---
+title: CLI Reference
+description: meridian-core command-line interface
+---
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `meridian analyze [tx]` | Full TRACE + FIELD + GRAVITY + BRIEF pipeline |
+| `meridian trace [tx]` | TRACE only |
+| `meridian field [tx]` | TRACE + FIELD |
+| `meridian gravity [tx]` | TRACE + FIELD + GRAVITY |
+| `meridian init [path]` | Scaffold a starter ecosystem manifest |
+| `meridian manifest validate [path]` | Validate an ecosystem manifest |
+| `meridian version` | Print CLI and engine version |
+
+## Common flags
+
+| Flag | Description |
+|---|---|
+| `-n, --network <network>` | `mainnet` or `testnet` (default: testnet) |
+| `--rpc-url <url>` | Override Soroban RPC endpoint |
+| `-f, --file <path>` | Read transaction XDR from a file |
+| `-e, --ecosystem <path>` | Path to ecosystem manifest JSON |
+| `--json` | Print raw JSON output |
+| `--no-brief` | Skip GenAI brief synthesis |
+| `--skip-field` | Skip FIELD layer |
+| `--skip-gravity` | Skip GRAVITY layer |
+
+## Examples
+
+```bash
+meridian analyze --file tx.xdr --network mainnet --ecosystem manifest.json
+meridian gravity <xdr> --network testnet --json
+meridian init --name my-ecosystem --network testnet
+```

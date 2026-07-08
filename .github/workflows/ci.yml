@@ -31,3 +31,19 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Validate manifests
+        run: npm run validate:manifests
+
+      - name: Validate examples
+        run: npm run validate:examples
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Python SDK tests
+        run: |
+          pip install './packages/sdk-py[dev]'
+          pytest packages/sdk-py/tests -q

@@ -1,0 +1,14 @@
+{
+  "description": "High blast radius validation schema",
+  "network": "testnet",
+  "manifest": "manifests/scholar-seal/manifest.json",
+  "assertions": {
+    "verdict": { "oneOf": ["CLEAR", "WARN", "ABORT"] },
+    "gravity.blast_radius": { "min": 0, "max": 100 },
+    "gravity.total_affected_users": { "min": 0 }
+  },
+  "e2e": {
+    "enabled": false,
+    "min_blast_radius": 0
+  }
+}
