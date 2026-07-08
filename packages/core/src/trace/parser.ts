@@ -2,6 +2,7 @@ import {
   Address,
   FeeBumpTransaction,
   Operation,
+  StrKey,
   humanizeEvents,
   xdr,
   type SorobanDataBuilder,
@@ -192,6 +193,193 @@ function parseOperation(op: Operation, index: number): ExecutionStep {
     type: 'classic',
     description: `Classic operation: ${op.type}`,
   };
+}
+
+interface HumanizedDiagnosticEvent {
+  type?: string;
+  contractId?: string;
+  topics: unknown[];
+  data?: unknown;
+}
+
+/**
+ * Decode a contract id topic from a diagnostic event (Buffer bytes or C... strkey).
+ */
+function decodeContractTopic(topic: unknown): string | undefined {
+  if (typeof topic === 'string' && topic.startsWith('C')) {
+    return topic;
+  }
+  if (Buffer.isBuffer(topic)) {
+    return StrKey.encodeContract(topic);
+  }
+  if (topic instanceof Uint8Array) {
+    return StrKey.encodeContract(Buffer.from(topic));
+  }
+  return undefined;
+}
+
+function topicSymbol(topic: unknown): string | undefined {
+  return typeof topic === 'string' ? topic : undefined;
+}
+
+/**
+ * Build execution steps from already-humanized diagnostic events.
+ * Used by {@link parseExecutionPathFromDiagnostics} and available for testing.
+ */
+export function parseHumanizedDiagnosticEvents(humanized: HumanizedDiagnosticEvent[]): ExecutionStep[] {
+  const steps: ExecutionStep[] = [];
+  let index = 0;
+
+  for (const event of humanized) {
+    const topics = event.topics;
+    const head = topicSymbol(topics[0]) ?? '';
+
+    if (head === 'fn_call') {
+      const contractId = decodeContractTopic(topics[1]);
+      const functionName = topicSymbol(topics[2]);
+      const callerId = event.contractId;
+      steps.push({
+        index: index++,
+        type: 'invoke',
+        contract_id: contractId,
+        function_name: functionName,
+        description: callerId
+          ? `Invoke ${functionName ?? 'contract'} on ${contractId ?? 'unknown'} (from ${callerId})`
+          : `Invoke ${functionName ?? 'contract'} on ${contractId ?? 'unknown'}`,
+      });
+      continue;
+    }
+
+    if (head === 'core_metrics') {
+      const metric = topicSymbol(topics[1]) ?? '';
+      if (metric === 'read_entry') {
+        steps.push({
+          index: index++,
+          type: 'read',
+          contract_id: event.contractId,
+          description: `Read ledger entry${event.contractId ? ` for ${event.contractId}` : ''}`,
+        });
+        continue;
+      }
+      if (metric === 'write_entry') {
+        steps.push({
+          index: index++,
+          type: 'write',
+          contract_id: event.contractId,
+          description: `Write ledger entry${event.contractId ? ` for ${event.contractId}` : ''}`,
+        });
+        continue;
+      }
+    }
+
+    if (head === 'read_entry') {
+      steps.push({
+        index: index++,
+        type: 'read',
+        contract_id: event.contractId,
+        description: `Read ledger entry${event.contractId ? ` for ${event.contractId}` : ''}`,
+      });
+      continue;
+    }
+
+    if (head === 'write_entry') {
+      steps.push({
+        index: index++,
+        type: 'write',
+        contract_id: event.contractId,
+        description: `Write ledger entry${event.contractId ? ` for ${event.contractId}` : ''}`,
+      });
+      continue;
+    }
+
+    const topicStr = topics.map((topic) => topicSymbol(topic) ?? '').join(':');
+    if (
+      head === 'require_auth'
+      || topicStr.includes('require_auth')
+      || (head === 'error' && topicStr.toLowerCase().includes('auth'))
+    ) {
+      const target = event.contractId ?? (typeof event.data === 'string' ? event.data : undefined);
+      steps.push({
+        index: index++,
+        type: 'auth',
+        contract_id: target,
+        description: `Authorization required${target ? ` for ${target}` : ''}`,
+      });
+    }
+  }
+
+  return steps;
+}
+
+/**
+ * Build an ordered execution path from simulation diagnostic events.
+ * Reconstructs invoke → read → write → auth steps as they occurred during simulation,
+ * including cross-contract calls not visible in static transaction XDR.
+ *
+ * @param events - Diagnostic events from simulateTransaction RPC
+ * @returns Simulation-native execution steps (empty when no diagnostic events)
+ */
+export function parseExecutionPathFromDiagnostics(events: xdr.DiagnosticEvent[]): ExecutionStep[] {
+  if (events.length === 0) return [];
+  return parseHumanizedDiagnosticEvents(humanizeEvents(events) as HumanizedDiagnosticEvent[]);
+}
+
+function extractClassicSteps(steps: ExecutionStep[]): ExecutionStep[] {
+  return steps.filter((step) => step.type === 'classic');
+}
+
+function appendAuthSteps(
+  steps: ExecutionStep[],
+  authEntries: AuthEntry[],
+): ExecutionStep[] {
+  const existing = new Set(
+    steps
+      .filter((step) => step.type === 'auth')
+      .map((step) => step.contract_id)
+      .filter((value): value is string => Boolean(value)),
+  );
+  const result = [...steps];
+  let index = steps.length;
+
+  for (const entry of authEntries) {
+    const target = entry.contract_id ?? entry.address;
+    if (existing.has(target)) continue;
+    existing.add(target);
+    result.push({
+      index: index++,
+      type: 'auth',
+      contract_id: target,
+      description: `Authorization required for ${target}`,
+    });
+  }
+
+  return result;
+}
+
+function reindexSteps(steps: ExecutionStep[]): ExecutionStep[] {
+  return steps.map((step, index) => ({ ...step, index }));
+}
+
+/**
+ * Combine XDR-parsed classic ops with simulation-native diagnostic steps,
+ * or fall back to footprint enrichment when diagnostics are unavailable.
+ */
+function buildExecutionPath(
+  txXdr: string,
+  network: Network,
+  events: xdr.DiagnosticEvent[],
+  context: SimulationContext,
+  authEntries: AuthEntry[],
+): ExecutionStep[] {
+  const diagnosticSteps = parseExecutionPathFromDiagnostics(events);
+  const xdrSteps = parseExecutionPath(txXdr, network);
+
+  if (diagnosticSteps.some((step) => step.type === 'invoke')) {
+    const classicSteps = extractClassicSteps(xdrSteps);
+    return reindexSteps(appendAuthSteps([...classicSteps, ...diagnosticSteps], authEntries));
+  }
+
+  return enrichExecutionPath(xdrSteps, context, authEntries);
 }
 
 /**
@@ -436,14 +624,13 @@ export function parseSimulationResult(
   txXdr: string,
   network: Network = 'testnet',
 ): TraceResult {
-  const basePath = parseExecutionPath(txXdr, network);
   const simulationContext = extractFootprint(
     raw.sorobanData,
     raw.simulationLedger,
     raw.latestLedger,
   );
   const authEntries = parseAuthEntries(raw.events);
-  const executionPath = enrichExecutionPath(basePath, simulationContext, authEntries);
+  const executionPath = buildExecutionPath(txXdr, network, raw.events, simulationContext, authEntries);
   const stalenessDelta = raw.latestLedger - raw.simulationLedger;
   const isStale = stalenessDelta > STALENESS_THRESHOLD;
 

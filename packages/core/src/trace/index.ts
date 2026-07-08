@@ -6,6 +6,7 @@ import { resolveRpcUrl, simulateTransaction } from './rpc.js';
 
 export {
   parseExecutionPath,
+  parseExecutionPathFromDiagnostics,
   parseSimulationResult,
   extractFootprint,
   mergeSimulationContexts,

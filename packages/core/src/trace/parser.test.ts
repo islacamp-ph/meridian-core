@@ -4,6 +4,7 @@ import {
   Address,
   Contract,
   Networks,
+  SorobanDataBuilder,
   TransactionBuilder,
   BASE_FEE,
   xdr,
@@ -12,6 +13,8 @@ import {
   checkTTLWarnings,
   extractResourceUsage,
   parseExecutionPath,
+  parseExecutionPathFromDiagnostics,
+  parseHumanizedDiagnosticEvents,
   parseFailurePoint,
   parseSimulationResult,
 } from './parser.js';
@@ -48,6 +51,132 @@ describe('parseExecutionPath', () => {
       contract_id: contractId,
       function_name: 'increment',
     });
+  });
+});
+
+/** Real testnet diagnostic events (increment call + storage error). */
+const TESTNET_DIAGNOSTIC_EVENTS = [
+  'AAAAAAAAAAAAAAAAAAAAAgAAAAAAAAADAAAADwAAAAdmbl9jYWxsAAAAAA0AAAAgNj6qOGeEH7rQ9O2Ix3nk/mblaiRw3JjA7JwHPQXHsQMAAAAPAAAACWluY3JlbWVudAAAAAAAAAE=',
+  'AAAAAAAAAAAAAAAAAAAAAgAAAAAAAAACAAAADwAAAAVlcnJvcgAAAAAAAAIAAAADAAAAAwAAAA4AAAA2dHJ5aW5nIHRvIGdldCBub24tZXhpc3RpbmcgdmFsdWUgZm9yIGNvbnRyYWN0IGluc3RhbmNlAAA=',
+];
+
+describe('parseExecutionPathFromDiagnostics', () => {
+  it('parses fn_call events into invoke steps with contract id and function name', () => {
+    const events = TESTNET_DIAGNOSTIC_EVENTS.map((evt) => xdr.DiagnosticEvent.fromXDR(evt, 'base64'));
+    const steps = parseExecutionPathFromDiagnostics(events);
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({
+      type: 'invoke',
+      function_name: 'increment',
+      contract_id: 'CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE',
+    });
+  });
+
+  it('returns empty array when no events are provided', () => {
+    expect(parseExecutionPathFromDiagnostics([])).toEqual([]);
+  });
+
+  it('parses cross-contract calls, storage access, and auth from humanized events', () => {
+    const calleeBytes = Buffer.alloc(32, 2);
+    const calleeId = 'CABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAFNSZ';
+    const callerId = 'CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE';
+
+    const steps = parseHumanizedDiagnosticEvents([
+      {
+        contractId: callerId,
+        topics: ['fn_call', calleeBytes, 'transfer'],
+      },
+      {
+        contractId: callerId,
+        topics: ['core_metrics', 'read_entry'],
+      },
+      {
+        contractId: callerId,
+        topics: ['core_metrics', 'write_entry'],
+      },
+      {
+        contractId: callerId,
+        topics: ['require_auth'],
+        data: 'GABC',
+      },
+    ]);
+
+    expect(steps.map((step) => step.type)).toEqual(['invoke', 'read', 'write', 'auth']);
+    expect(steps[0]).toMatchObject({
+      type: 'invoke',
+      contract_id: calleeId,
+      function_name: 'transfer',
+    });
+    expect(steps[0].description).toContain(callerId);
+    expect(steps[1]).toMatchObject({ type: 'read', contract_id: callerId });
+    expect(steps[2]).toMatchObject({ type: 'write', contract_id: callerId });
+    expect(steps[3]).toMatchObject({ type: 'auth', contract_id: callerId });
+  });
+});
+
+describe('parseSimulationResult diagnostic execution path', () => {
+  it('uses simulation-native invoke steps when diagnostic events are present', () => {
+    const events = TESTNET_DIAGNOSTIC_EVENTS.map((evt) => xdr.DiagnosticEvent.fromXDR(evt, 'base64'));
+    const result = parseSimulationResult(
+      {
+        success: false,
+        latestLedger: 120,
+        simulationLedger: 120,
+        minResourceFee: '0',
+        events,
+        rpcMetrics: {
+          simulate_transaction_ms: 5,
+          get_latest_ledger_ms: 2,
+          latest_ledger_fallback: false,
+          latest_ledger_timed_out: false,
+          timeout_ms: 30000,
+        },
+        error: 'HostError: Error(Storage, MissingValue)',
+      },
+      'not-valid-xdr',
+    );
+
+    const invokeSteps = result.execution_path.filter((step) => step.type === 'invoke');
+    expect(invokeSteps).toHaveLength(1);
+    expect(invokeSteps[0].function_name).toBe('increment');
+    expect(result.execution_path.some((step) => step.type === 'read')).toBe(false);
+  });
+
+  it('falls back to footprint enrichment when diagnostics lack fn_call events', () => {
+    const contractId = 'CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE';
+    const ledgerKey = xdr.LedgerKey.contractData(
+      new xdr.LedgerKeyContractData({
+        contract: Address.fromString(contractId).toScAddress(),
+        key: xdr.ScVal.scvSymbol('counter'),
+        durability: xdr.ContractDataDurability.persistent(),
+      }),
+    );
+
+    const sorobanData = new SorobanDataBuilder();
+    sorobanData.setReadOnly([ledgerKey]);
+
+    const result = parseSimulationResult(
+      {
+        success: true,
+        latestLedger: 120,
+        simulationLedger: 120,
+        minResourceFee: '42',
+        events: [],
+        sorobanData,
+        rpcMetrics: {
+          simulate_transaction_ms: 5,
+          get_latest_ledger_ms: 2,
+          latest_ledger_fallback: false,
+          latest_ledger_timed_out: false,
+          timeout_ms: 30000,
+        },
+      },
+      'not-valid-xdr',
+    );
+
+    expect(result.execution_path.some((step) => step.type === 'read')).toBe(true);
+    expect(result.execution_path.filter((step) => step.type === 'invoke')).toHaveLength(0);
   });
 });
 

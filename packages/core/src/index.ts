@@ -5,5 +5,5 @@ export { buildExplainabilityReport } from './explainability.js';
 export { buildFieldGraph } from './field/index.js';
 export { scoreGravity } from './gravity/index.js';
 export { logger, Logger } from './logger.js';
-export { trace, parseExecutionPath, parseSimulationResult, resolveRpcUrl, simulateTransaction, checkTTLWarnings, fetchLedgerEntryTTLs } from './trace/index.js';
+export { trace, parseExecutionPath, parseExecutionPathFromDiagnostics, parseSimulationResult, resolveRpcUrl, simulateTransaction, checkTTLWarnings, fetchLedgerEntryTTLs } from './trace/index.js';
 export type * from './types.js';
