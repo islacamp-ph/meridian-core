@@ -110,6 +110,7 @@ export interface FieldResult {
   dependency_graph: DependencyNode[];
   ttl_warnings: TTLWarning[];
   manifest_coverage: number;
+  upgrade_warnings: UpgradeWarning[];
 }
 
 export type DependencyNodeSource =
@@ -125,6 +126,15 @@ export interface DependencyNode {
   depth: number;
   source?: DependencyNodeSource;
   wasm_hash?: string;
+  wasm_hash_expected?: string;
+  upgrade_risk?: boolean;
+}
+
+export interface UpgradeWarning {
+  contract_id: string;
+  name?: string;
+  expected_wasm_hash: string;
+  on_chain_wasm_hash: string;
 }
 
 export interface TTLWarning {
@@ -229,12 +239,16 @@ export interface ExplainabilityContractNode {
   from_execution_path: boolean;
   from_footprint: boolean;
   from_manifest: boolean;
+  manifest_inferred?: boolean;
   touched_by_operations: number[];
   dependencies: string[];
   impact?: ImpactLevel;
   impact_reason?: string;
   active_users?: number;
   criticality?: Criticality;
+  upgrade_risk?: boolean;
+  wasm_hash?: string;
+  wasm_hash_expected?: string;
 }
 
 export interface BlastRadiusExplanation {
@@ -278,6 +292,8 @@ export interface ManifestContract {
   active_users?: number;
   criticality?: Criticality;
   role?: string;
+  /** Expected on-chain WASM hash (hex) for upgrade-risk detection. */
+  expected_wasm_hash?: string;
 }
 
 export interface LayerTimingMetrics {

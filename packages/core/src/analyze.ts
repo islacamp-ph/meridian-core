@@ -286,6 +286,9 @@ export async function analyze(
   if (fieldResult.ttl_warnings.length > 0) {
     warnings.push(`${fieldResult.ttl_warnings.length} TTL warning(s) detected on footprint entries`);
   }
+  if (fieldResult.upgrade_warnings.length > 0) {
+    warnings.push(`${fieldResult.upgrade_warnings.length} WASM upgrade risk(s) detected against manifest`);
+  }
 
   const fixSequence = generateFixSequence({
     verdict,
@@ -370,6 +373,7 @@ function emptyFieldResult() {
     dependency_graph: [],
     ttl_warnings: [],
     manifest_coverage: 0,
+    upgrade_warnings: [],
   };
 }
 

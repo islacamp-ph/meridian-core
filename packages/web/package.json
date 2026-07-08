@@ -1,0 +1,34 @@
+{
+  "name": "@meridian/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MERIDIAN marketing site",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "docker:build": "docker build -t meridian-web .",
+    "docker:run": "docker run --rm -p 8080:80 meridian-web",
+    "deploy": "vercel deploy --yes",
+    "deploy:prod": "vercel deploy --prod --yes"
+  },
+  "dependencies": {
+    "@vercel/kv": "^3.0.0",
+    "bcryptjs": "^3.0.2",
+    "jose": "^6.0.11",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vercel/node": "^5.0.0",
+    "@vitejs/plugin-react": "^5.0.2",
+    "typescript": "^5.7.2",
+    "vercel": "^54.21.0",
+    "vite": "^7.0.6"
+  }
+}

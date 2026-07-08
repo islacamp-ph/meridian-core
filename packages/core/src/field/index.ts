@@ -7,6 +7,7 @@ import type {
   FieldResult,
   SimulationContext,
   TraceResult,
+  UpgradeWarning,
 } from '../types.js';
 import { checkTTLWarnings, extractFootprint, mergeSimulationContexts } from '../trace/parser.js';
 import {
@@ -18,7 +19,8 @@ import {
 
 /**
  * Build dependency graph from simulation footprint and optional ecosystem manifest.
- * Performs TTL checks and optional record-mode re-simulation for deep discovery.
+ * Performs TTL checks, WASM metadata enrichment, upgrade-risk detection,
+ * and optional record-mode re-simulation for deep discovery.
  *
  * @param trace - TRACE result with execution path and footprint
  * @param context - Simulation context with footprint contracts
@@ -78,18 +80,33 @@ export async function buildFieldGraph(
   const observedContracts = collectObservedContracts(trace, mergedContext);
   const contractDepths = buildContractDepths(observedContracts, manifestLookup);
 
-  for (const address of manifestLookup.keys()) {
-    if (observedContracts.has(address) && !contractSources.has(address)) {
+  for (const address of contractDepths.keys()) {
+    if (!contractSources.has(address)) {
       contractSources.set(address, 'manifest');
     }
   }
 
+  const upgradeWarnings: UpgradeWarning[] = [];
   const dependencyGraph: DependencyNode[] = await Promise.all(
     [...contractDepths.entries()]
       .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
       .map(async ([address, depth]) => {
         const manifestEntry = manifestLookup.get(address);
         const wasmHash = await fetchContractWasmHash(rpcUrl, address, timeoutMs);
+        const expectedWasm = manifestEntry?.expected_wasm_hash;
+        const upgradeRisk = Boolean(
+          expectedWasm && wasmHash && normalizeWasmHash(expectedWasm) !== normalizeWasmHash(wasmHash),
+        );
+
+        if (upgradeRisk && expectedWasm && wasmHash) {
+          upgradeWarnings.push({
+            contract_id: address,
+            name: manifestEntry?.name,
+            expected_wasm_hash: normalizeWasmHash(expectedWasm),
+            on_chain_wasm_hash: normalizeWasmHash(wasmHash),
+          });
+        }
+
         return {
           address,
           name: manifestEntry?.name,
@@ -97,6 +114,8 @@ export async function buildFieldGraph(
           depth,
           source: contractSources.get(address),
           wasm_hash: wasmHash,
+          wasm_hash_expected: expectedWasm ? normalizeWasmHash(expectedWasm) : undefined,
+          upgrade_risk: upgradeRisk || undefined,
         };
       }),
   );
@@ -111,6 +130,7 @@ export async function buildFieldGraph(
     dependency_graph: dependencyGraph,
     ttl_warnings: ttlWarnings,
     manifest_coverage: manifestCoverage,
+    upgrade_warnings: upgradeWarnings,
   };
 }
 
@@ -122,17 +142,22 @@ export async function buildFieldGraph(
  */
 function buildManifestLookup(
   manifest?: EcosystemManifest,
-): Map<string, { name: string; dependencies?: string[] }> {
-  const lookup = new Map<string, { name: string; dependencies?: string[] }>();
+): Map<string, { name: string; dependencies?: string[]; expected_wasm_hash?: string }> {
+  const lookup = new Map<string, { name: string; dependencies?: string[]; expected_wasm_hash?: string }>();
   if (!manifest) return lookup;
 
   for (const contract of manifest.contracts) {
     lookup.set(contract.address, {
       name: contract.name,
       dependencies: contract.dependencies,
+      expected_wasm_hash: contract.expected_wasm_hash,
     });
   }
   return lookup;
+}
+
+function normalizeWasmHash(hash: string): string {
+  return hash.trim().toLowerCase().replace(/^0x/, '');
 }
 
 /**
@@ -165,7 +190,7 @@ function collectObservedContracts(trace: TraceResult, context: SimulationContext
 
 function buildContractDepths(
   observedContracts: Set<string>,
-  manifestLookup: Map<string, { name: string; dependencies?: string[] }>,
+  manifestLookup: Map<string, { name: string; dependencies?: string[]; expected_wasm_hash?: string }>,
 ): Map<string, number> {
   const depths = new Map<string, number>();
   const queue: Array<{ address: string; depth: number }> = [...observedContracts].map((address) => ({

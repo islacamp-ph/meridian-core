@@ -35,6 +35,7 @@ function makeAnalysis(): AnalyzeResponse {
       dependency_graph: [{ address: 'CPAY', name: 'Payments', dependencies: [], depth: 0 }],
       ttl_warnings: [],
       manifest_coverage: 1,
+      upgrade_warnings: [],
     },
     gravity: {
       blast_radius: 35,

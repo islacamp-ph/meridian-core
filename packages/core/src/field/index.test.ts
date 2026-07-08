@@ -9,9 +9,10 @@ vi.mock('../trace/rpc.js', () => ({
   fetchContractWasmHash: vi.fn(async () => undefined),
 }));
 
-import { simulateTransaction } from '../trace/rpc.js';
+import { simulateTransaction, fetchContractWasmHash } from '../trace/rpc.js';
 
 const mockedSimulateTransaction = vi.mocked(simulateTransaction);
+const mockedFetchContractWasmHash = vi.mocked(fetchContractWasmHash);
 
 function makeTraceResult(): TraceResult {
   return {
@@ -51,6 +52,8 @@ const manifest: EcosystemManifest = {
 describe('buildFieldGraph', () => {
   beforeEach(() => {
     mockedSimulateTransaction.mockReset();
+    mockedFetchContractWasmHash.mockReset();
+    mockedFetchContractWasmHash.mockResolvedValue(undefined);
     mockedSimulateTransaction.mockResolvedValue({
       success: true,
       latestLedger: 1,
@@ -91,9 +94,9 @@ describe('buildFieldGraph', () => {
     });
 
     expect(result.dependency_graph).toEqual([
-      { address: 'CA', name: 'A', dependencies: ['CB'], depth: 0, source: 'execution_path', wasm_hash: undefined },
-      { address: 'CB', name: 'B', dependencies: ['CC'], depth: 1, source: undefined, wasm_hash: undefined },
-      { address: 'CC', name: 'C', dependencies: [], depth: 2, source: undefined, wasm_hash: undefined },
+      { address: 'CA', name: 'A', dependencies: ['CB'], depth: 0, source: 'execution_path', wasm_hash: undefined, wasm_hash_expected: undefined, upgrade_risk: undefined },
+      { address: 'CB', name: 'B', dependencies: ['CC'], depth: 1, source: 'manifest', wasm_hash: undefined, wasm_hash_expected: undefined, upgrade_risk: undefined },
+      { address: 'CC', name: 'C', dependencies: [], depth: 2, source: 'manifest', wasm_hash: undefined, wasm_hash_expected: undefined, upgrade_risk: undefined },
     ]);
   });
 
@@ -110,5 +113,40 @@ describe('buildFieldGraph', () => {
       authMode: 'record',
       timeoutMs: 30000,
     });
+  });
+
+  it('flags WASM upgrade risk when on-chain hash differs from manifest', async () => {
+    const manifestWithWasm: EcosystemManifest = {
+      ...manifest,
+      contracts: [
+        {
+          ...manifest.contracts[0],
+          expected_wasm_hash: 'aa'.repeat(32),
+        },
+        ...manifest.contracts.slice(1),
+      ],
+    };
+
+    mockedFetchContractWasmHash.mockImplementation(async (rpcUrl, address) => {
+      if (address === 'CA') return 'bb'.repeat(32);
+      return undefined;
+    });
+
+    const trace = makeTraceResult();
+    const result = await buildFieldGraph(trace, trace.simulation_context, {
+      network: 'testnet',
+      manifest: manifestWithWasm,
+      txXdr: 'AAAA',
+    });
+
+    expect(result.upgrade_warnings).toEqual([
+      {
+        contract_id: 'CA',
+        name: 'A',
+        expected_wasm_hash: 'aa'.repeat(32),
+        on_chain_wasm_hash: 'bb'.repeat(32),
+      },
+    ]);
+    expect(result.dependency_graph[0].upgrade_risk).toBe(true);
   });
 });

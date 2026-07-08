@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   Account,
   Address,
@@ -12,6 +15,7 @@ import {
 import {
   checkTTLWarnings,
   extractResourceUsage,
+  attachFootprintLedgerKeys,
   parseExecutionPath,
   parseExecutionPathFromDiagnostics,
   parseHumanizedDiagnosticEvents,
@@ -51,6 +55,52 @@ describe('parseExecutionPath', () => {
       contract_id: contractId,
       function_name: 'increment',
     });
+  });
+
+  it('parses ScholarSeal canonical Soroban XDR fixture', () => {
+    const fixturePath = join(
+      dirname(fileURLToPath(import.meta.url)),
+      '../../../../examples/scholar-seal/tx.xdr',
+    );
+    const txXdr = readFileSync(fixturePath, 'utf8').trim();
+    const steps = parseExecutionPath(txXdr, 'testnet');
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0]).toMatchObject({
+      type: 'invoke',
+      contract_id: 'CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE',
+      function_name: 'increment',
+    });
+  });
+});
+
+describe('attachFootprintLedgerKeys', () => {
+  const contractId = 'CA3D5KRYM6CB7OWQ6TWYRR3Z4T7GNZLKERYNZGGA5SOAOPIFY6YQGAXE';
+  const ledgerKey = xdr.LedgerKey.contractData(
+    new xdr.LedgerKeyContractData({
+      contract: Address.fromString(contractId).toScAddress(),
+      key: xdr.ScVal.scvSymbol('counter'),
+      durability: xdr.ContractDataDurability.persistent(),
+    }),
+  ).toXDR('base64');
+
+  it('attaches footprint ledger keys to diagnostic read/write steps', () => {
+    const steps = attachFootprintLedgerKeys(
+      [
+        { index: 0, type: 'read', contract_id: contractId, description: 'Read ledger entry' },
+        { index: 1, type: 'write', contract_id: contractId, description: 'Write ledger entry' },
+      ],
+      {
+        ledgerSequence: 1,
+        latestLedger: 1,
+        footprintContracts: [contractId],
+        readOnly: [ledgerKey],
+        readWrite: [ledgerKey],
+      },
+    );
+
+    expect(steps[0].ledger_keys).toEqual([ledgerKey]);
+    expect(steps[1].ledger_keys).toEqual([ledgerKey]);
   });
 });
 

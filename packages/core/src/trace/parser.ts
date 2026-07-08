@@ -1,5 +1,6 @@
 import {
   Address,
+  Asset,
   FeeBumpTransaction,
   Operation,
   StrKey,
@@ -188,6 +189,53 @@ function parseOperation(op: Operation, index: number): ExecutionStep {
     };
   }
 
+  if (op.type === 'payment') {
+    const payment = op as Operation.Payment;
+    return {
+      index,
+      type: 'classic',
+      description: `Payment: ${payment.amount} → ${payment.destination}`,
+    };
+  }
+
+  if (op.type === 'createAccount') {
+    const createAccount = op as Operation.CreateAccount;
+    return {
+      index,
+      type: 'classic',
+      description: `Create account ${createAccount.destination} (starting balance ${createAccount.startingBalance})`,
+    };
+  }
+
+  if (op.type === 'changeTrust') {
+    const changeTrust = op as Operation.ChangeTrust;
+    const assetLabel = changeTrust.line instanceof Asset
+      ? changeTrust.line.getCode()
+      : 'liquidity pool';
+    return {
+      index,
+      type: 'classic',
+      description: `Change trust: ${assetLabel} (limit ${changeTrust.limit})`,
+    };
+  }
+
+  if (op.type === 'pathPaymentStrictSend' || op.type === 'pathPaymentStrictReceive') {
+    return {
+      index,
+      type: 'classic',
+      description: `Path payment (${op.type})`,
+    };
+  }
+
+  if (op.type === 'manageData') {
+    const manageData = op as Operation.ManageData;
+    return {
+      index,
+      type: 'classic',
+      description: `Manage data: ${manageData.name}`,
+    };
+  }
+
   return {
     index,
     type: 'classic',
@@ -361,6 +409,43 @@ function reindexSteps(steps: ExecutionStep[]): ExecutionStep[] {
 }
 
 /**
+ * Attach footprint ledger keys to read/write execution steps by contract id.
+ */
+export function attachFootprintLedgerKeys(
+  steps: ExecutionStep[],
+  context: SimulationContext,
+): ExecutionStep[] {
+  const keysByContract = new Map<string, { read: string[]; write: string[] }>();
+
+  for (const key of context.readOnly) {
+    const contractId = extractContractFromLedgerKeyString(key);
+    if (!contractId) continue;
+    const entry = keysByContract.get(contractId) ?? { read: [], write: [] };
+    entry.read.push(key);
+    keysByContract.set(contractId, entry);
+  }
+
+  for (const key of context.readWrite) {
+    const contractId = extractContractFromLedgerKeyString(key);
+    if (!contractId) continue;
+    const entry = keysByContract.get(contractId) ?? { read: [], write: [] };
+    entry.write.push(key);
+    keysByContract.set(contractId, entry);
+  }
+
+  return steps.map((step) => {
+    if (!step.contract_id || step.ledger_keys?.length) return step;
+    const keys = keysByContract.get(step.contract_id);
+    if (!keys) return step;
+
+    const ledgerKeys = step.type === 'write' ? keys.write : step.type === 'read' ? keys.read : [];
+    if (ledgerKeys.length === 0) return step;
+
+    return { ...step, ledger_keys: ledgerKeys };
+  });
+}
+
+/**
  * Combine XDR-parsed classic ops with simulation-native diagnostic steps,
  * or fall back to footprint enrichment when diagnostics are unavailable.
  */
@@ -376,7 +461,8 @@ function buildExecutionPath(
 
   if (diagnosticSteps.some((step) => step.type === 'invoke')) {
     const classicSteps = extractClassicSteps(xdrSteps);
-    return reindexSteps(appendAuthSteps([...classicSteps, ...diagnosticSteps], authEntries));
+    const combined = reindexSteps(appendAuthSteps([...classicSteps, ...diagnosticSteps], authEntries));
+    return attachFootprintLedgerKeys(combined, context);
   }
 
   return enrichExecutionPath(xdrSteps, context, authEntries);
