@@ -5,6 +5,8 @@ import { traceCommand } from './commands/trace.js';
 import { fieldCommand } from './commands/field.js';
 import { gravityCommand } from './commands/gravity.js';
 import { versionCommand } from './commands/version.js';
+import { initCommand } from './commands/init.js';
+import { manifestCommand } from './commands/manifest.js';
 
 /**
  * Build the root `meridian` commander program with all subcommands attached.
@@ -27,6 +29,8 @@ Examples:
   $ meridian analyze --file txs.json --network testnet
   $ meridian trace --file tx.xdr --network testnet
   $ meridian gravity <base64-xdr> --ecosystem manifest.json
+  $ meridian init --name my-ecosystem --network testnet
+  $ meridian manifest validate manifest.json
 
 Environment:
   STELLAR_RPC_TESTNET   Soroban RPC endpoint for testnet (or use --rpc-url)
@@ -40,6 +44,8 @@ Environment:
   program.addCommand(fieldCommand());
   program.addCommand(gravityCommand());
   program.addCommand(versionCommand());
+  program.addCommand(initCommand());
+  program.addCommand(manifestCommand());
 
   return program;
 }
