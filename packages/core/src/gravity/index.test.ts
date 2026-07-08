@@ -46,6 +46,7 @@ function makeField(): FieldResult {
     ],
     ttl_warnings: [],
     manifest_coverage: 1,
+    upgrade_warnings: [],
   };
 }
 

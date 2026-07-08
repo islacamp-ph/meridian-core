@@ -59,6 +59,7 @@ function makeAnalysisResult() {
       dependency_graph: [{ address: 'CPAY', name: 'Payments', dependencies: [], depth: 0 }],
       ttl_warnings: [],
       manifest_coverage: 1,
+      upgrade_warnings: [],
     },
     gravity: {
       blast_radius: 35,
@@ -127,6 +128,7 @@ function makeFieldResult() {
     dependency_graph: [{ address: 'CPAY', name: 'Payments', dependencies: [], depth: 0 }],
     ttl_warnings: [],
     manifest_coverage: 1,
+    upgrade_warnings: [],
   };
 }
 

@@ -12,6 +12,7 @@ export {
   mergeSimulationContexts,
   checkTTLWarnings,
   enrichExecutionPath,
+  attachFootprintLedgerKeys,
 } from './parser.js';
 export { resolveNetworkPassphrase, parseTransactionFromXdr } from './network.js';
 export {

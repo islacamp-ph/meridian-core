@@ -44,6 +44,7 @@ const baseInput: BriefInput = {
     dependency_graph: [],
     ttl_warnings: [],
     manifest_coverage: 0,
+    upgrade_warnings: [],
   },
   gravity: {
     blast_radius: 40,

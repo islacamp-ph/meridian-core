@@ -223,6 +223,7 @@ function readManifestContract(
     errors,
   );
   const role = readOptionalString(value.role, `${path}.role`, errors);
+  const expectedWasmHash = readOptionalWasmHash(value.expected_wasm_hash, `${path}.expected_wasm_hash`, errors);
 
   if (!name || !address || !network) return null;
   return {
@@ -233,6 +234,7 @@ function readManifestContract(
     active_users: activeUsers,
     criticality,
     role,
+    expected_wasm_hash: expectedWasmHash,
   };
 }
 
@@ -287,6 +289,15 @@ function readOptionalEnum<T extends string>(
     return undefined;
   }
   return value as T;
+}
+
+function readOptionalWasmHash(value: unknown, path: string, errors: string[]): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !/^[0-9a-fA-F]{64}$/.test(value.trim())) {
+    errors.push(`${path} must be a 64-character hex-encoded SHA-256 hash.`);
+    return undefined;
+  }
+  return value.trim().toLowerCase();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

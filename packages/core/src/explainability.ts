@@ -59,6 +59,9 @@ export function buildExplainabilityReport(
     const manifestEntry = manifestLookup.get(node.address);
     const impacted = impactLookup.get(node.address);
     const sources = collectSources(node.address, executionContracts, footprintContracts, manifestLookup);
+    const manifestInferred = node.source === 'manifest'
+      && !executionContracts.has(node.address)
+      && !footprintContracts.has(node.address);
 
     return {
       address: node.address,
@@ -67,12 +70,16 @@ export function buildExplainabilityReport(
       from_execution_path: executionContracts.has(node.address),
       from_footprint: footprintContracts.has(node.address),
       from_manifest: manifestLookup.has(node.address),
+      manifest_inferred: manifestInferred || undefined,
       touched_by_operations: touchedByOperations.get(node.address) ?? [],
       dependencies: node.dependencies,
       impact: impacted?.impact,
       impact_reason: impacted?.reason,
       active_users: manifestEntry?.active_users,
       criticality: manifestEntry?.criticality,
+      upgrade_risk: node.upgrade_risk,
+      wasm_hash: node.wasm_hash,
+      wasm_hash_expected: node.wasm_hash_expected,
     };
   });
 
