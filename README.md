@@ -134,6 +134,8 @@ npm test
 | `meridian field [tx]` | TRACE + FIELD — map the dependency graph touched by the transaction |
 | `meridian gravity [tx]` | TRACE + FIELD + GRAVITY — score the blast radius |
 | `meridian version` | Print CLI and engine version |
+| `meridian init [path]` | Scaffold a starter ecosystem manifest JSON file |
+| `meridian manifest validate [path]` | Validate an ecosystem manifest JSON file |
 | `meridian --help` / `meridian <command> --help` | Show detailed help |
 
 `tx` is the base64-encoded transaction XDR. It can be passed as an argument, via `--file`, or piped over stdin — see [Examples](#examples).
@@ -181,6 +183,10 @@ meridian trace <base64-xdr> --network testnet
 
 # Check installed versions
 meridian version
+
+# Scaffold and validate an ecosystem manifest
+meridian init --name my-ecosystem --network testnet
+meridian manifest validate manifest.json
 ```
 
 ### Ecosystem Manifest

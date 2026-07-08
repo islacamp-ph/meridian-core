@@ -498,3 +498,45 @@ describe('body size limit', () => {
     delete process.env.MERIDIAN_MAX_BODY_BYTES;
   });
 });
+
+describe('rate limit middleware', () => {
+  it('returns 429 after exceeding the per-minute limit', async () => {
+    process.env.MERIDIAN_RATE_LIMIT_PER_MINUTE = '2';
+    resetRateLimitState();
+
+    const headers = { 'X-Forwarded-For': '203.0.113.10' };
+
+    const first = await app.request('/v1/health', { headers });
+    const second = await app.request('/v1/health', { headers });
+    const third = await app.request('/v1/health', { headers });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(third.status).toBe(429);
+    expect(third.headers.get('Retry-After')).toBeTruthy();
+
+    delete process.env.MERIDIAN_RATE_LIMIT_PER_MINUTE;
+    resetRateLimitState();
+  });
+});
+
+describe('layer route caching', () => {
+  beforeEach(() => {
+    mockedTrace.mockReset();
+    clearMemoryCache();
+  });
+
+  it('reuses TRACE cache across repeated /v1/trace requests', async () => {
+    mockedTrace.mockResolvedValue(makeTraceResult());
+
+    const body = JSON.stringify({ tx: 'AAAA', network: 'testnet' });
+    const headers = { 'Content-Type': 'application/json' };
+
+    const first = await app.request('/v1/trace', { method: 'POST', headers, body });
+    const second = await app.request('/v1/trace', { method: 'POST', headers, body });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(mockedTrace).toHaveBeenCalledTimes(1);
+  });
+});
