@@ -10,7 +10,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (!storageReady()) {
-    return json(res, 503, { error: 'Account storage is not configured. Add Vercel KV to this project.' });
+    return json(res, 503, { error: 'Account storage is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.' });
   }
 
   if (!process.env.AUTH_SECRET) {
