@@ -25,8 +25,8 @@
     "picocolors": "^1.1.1"
   },
   "devDependencies": {
-    "@meridian/ai": "0.1.0",
-    "@meridian/core": "0.2.0",
+    "@meridian/ai": "*",
+    "@meridian/core": "*",
     "esbuild": "^0.28.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
