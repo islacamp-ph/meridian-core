@@ -85,5 +85,44 @@ describe('analyze', () => {
       ['CEXECUTION', 'CFOOTPRINT'],
     );
     expect(response.explainability.blast_radius.normalized_score).toBe(response.gravity.blast_radius);
+    expect(response.decision.action).toMatch(/submit|hold|rewrite/);
+    expect(response.execution_graph.root_contracts.length).toBeGreaterThan(0);
+    expect(response.state_changes.summary.length).toBeGreaterThan(0);
+    expect(Array.isArray(response.top_risks)).toBe(true);
+  });
+
+  it('evaluates policy rules and can escalate verdict', async () => {
+    mockedTrace.mockResolvedValue(makeTraceResult());
+    mockedBuildFieldGraph.mockResolvedValue({
+      contracts_mapped: 2,
+      dependency_graph: [
+        { address: 'CEXECUTION', dependencies: [], depth: 0 },
+        { address: 'CFOOTPRINT', dependencies: [], depth: 0 },
+      ],
+      ttl_warnings: [],
+      manifest_coverage: 1,
+      upgrade_warnings: [],
+    });
+
+    const result = await analyze({
+      tx: 'AAAA',
+      network: 'testnet',
+      ecosystem: {
+        name: 'eco',
+        version: '1',
+        contracts: [{ name: 'Exec', address: 'CEXECUTION', network: 'testnet' }],
+      },
+      options: {
+        policy_rules: [{ type: 'unknown_contract' }],
+      },
+    });
+
+    if ('layer' in result) {
+      throw new Error(`unexpected MeridianError: ${result.code}`);
+    }
+
+    expect(result.policy?.passed).toBe(false);
+    expect(result.verdict).toBe('ABORT');
+    expect(result.decision.action).toMatch(/hold|rewrite/);
   });
 });

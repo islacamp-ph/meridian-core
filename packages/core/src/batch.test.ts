@@ -22,6 +22,30 @@ function makeStructuredResult(
     version: '0.1.1',
     verdict: 'WARN',
     confidence: 0.7,
+    decision: {
+      action: 'hold',
+      reason: 'Hold submission',
+      confidence: 0.7,
+      top_risks: [],
+    },
+    execution_graph: {
+      nodes: [],
+      edges: [],
+      root_contracts: [],
+      downstream_contracts: [],
+      auth_dependencies: [],
+      state_surfaces: { read: [], write: [] },
+      token_movements: [],
+    },
+    state_changes: {
+      summary: 'No state changes',
+      reads: [],
+      writes: [],
+      irreversible_writes: 0,
+      contracts_read: [],
+      contracts_written: [],
+    },
+    top_risks: [],
     trace: {
       success: false,
       failure_point: {
