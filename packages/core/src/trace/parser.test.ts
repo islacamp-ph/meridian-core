@@ -434,6 +434,6 @@ describe('generateFixSequence', () => {
       traceSuccess: true,
       blastRadius: 75,
     });
-    expect(steps?.some((step) => step.operation === 'review_scope')).toBe(true);
+    expect(steps?.some((step) => step.operation === 'reduce_scope')).toBe(true);
   });
 });

@@ -9,7 +9,31 @@ export type SimulationAuthMode = 'enforce' | 'record' | 'record_allow_nonroot';
 
 export type Verdict = 'CLEAR' | 'WARN' | 'ABORT';
 
+/** Pre-submit decision: should this transaction be sent right now? */
+export type DecisionAction = 'submit' | 'hold' | 'rewrite';
+
 export type ConfidenceBucket = 'LOW' | 'MEDIUM' | 'HIGH';
+
+export type RiskSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+
+export type ExecutionGraphEdgeType =
+  | 'invoke'
+  | 'downstream'
+  | 'auth'
+  | 'read'
+  | 'write'
+  | 'token';
+
+export type PolicyRuleType =
+  | 'unknown_contract'
+  | 'admin_auth_path'
+  | 'max_blast_radius'
+  | 'allowlist_only'
+  | 'ttl_critical'
+  | 'upgrade_risk'
+  | 'min_confidence';
+
+export type PolicyEffect = 'ABORT' | 'WARN' | 'ALLOW';
 
 export type RecoveryLevel = 'FULL' | 'PARTIAL' | 'NONE';
 
@@ -37,6 +61,8 @@ export interface AnalyzeOptions {
   field_auth_mode?: SimulationAuthMode;
   /** When true, FIELD uses record_allow_nonroot for deep ecosystem mapping. */
   deep_discovery?: boolean;
+  /** Optional deterministic policy rules evaluated after analysis. */
+  policy_rules?: PolicyRule[];
 }
 
 export interface AnalyzeResponse {
@@ -44,6 +70,14 @@ export interface AnalyzeResponse {
   version: string;
   verdict: Verdict;
   confidence: number;
+  /** Pre-submit decision: submit | hold | rewrite with top risks. */
+  decision: Decision;
+  /** First-class execution / dependency / state / auth graph. */
+  execution_graph: ExecutionGraph;
+  /** Ledger state surfaces this tx intends to touch. */
+  state_changes: StateChangeSummary;
+  /** Top risks (also mirrored on decision.top_risks). */
+  top_risks: RiskItem[];
   trace: TraceResult;
   field: FieldResult;
   gravity: GravityResult;
@@ -51,7 +85,140 @@ export interface AnalyzeResponse {
   brief: string;
   fix_sequence?: FixStep[];
   warnings?: string[];
+  /** Optional policy evaluation when rules are provided on the request. */
+  policy?: PolicyResult;
   meta: ResponseMeta;
+}
+
+export interface Decision {
+  action: DecisionAction;
+  reason: string;
+  confidence: number;
+  top_risks: RiskItem[];
+}
+
+export interface RiskItem {
+  id: string;
+  severity: RiskSeverity;
+  title: string;
+  why_it_matters: string;
+  contract_id?: string;
+  factor_key?: string;
+}
+
+export interface ExecutionGraphNode {
+  id: string;
+  kind: 'contract' | 'account' | 'asset' | 'ledger_key';
+  label: string;
+  address?: string;
+  depth?: number;
+  source?: DependencyNodeSource;
+  upgrade_risk?: boolean;
+}
+
+export interface ExecutionGraphEdge {
+  from: string;
+  to: string;
+  type: ExecutionGraphEdgeType;
+  label?: string;
+  step_index?: number;
+}
+
+export interface ExecutionGraph {
+  nodes: ExecutionGraphNode[];
+  edges: ExecutionGraphEdge[];
+  root_contracts: string[];
+  downstream_contracts: string[];
+  auth_dependencies: string[];
+  state_surfaces: {
+    read: string[];
+    write: string[];
+  };
+  token_movements: TokenMovement[];
+}
+
+export interface TokenMovement {
+  from?: string;
+  to?: string;
+  asset?: string;
+  amount?: string;
+  step_index?: number;
+  description: string;
+}
+
+export interface StateChangeSummary {
+  summary: string;
+  reads: StateSurface[];
+  writes: StateSurface[];
+  irreversible_writes: number;
+  contracts_read: string[];
+  contracts_written: string[];
+}
+
+export interface StateSurface {
+  ledger_key: string;
+  contract_id?: string;
+  access: 'read' | 'write';
+  description: string;
+}
+
+export interface PolicyRule {
+  type: PolicyRuleType;
+  /** Effect when the rule matches. Defaults: unknown_contract/allowlist/ttl/max_blast → ABORT, others → WARN. */
+  effect?: PolicyEffect;
+  /** For max_blast_radius: fail/warn when blast_radius >= threshold. */
+  threshold?: number;
+  /** For allowlist_only: list of permitted contract addresses. */
+  allowlist?: string[];
+  /** For min_confidence: warn/fail when confidence < threshold. */
+  min_confidence?: number;
+  /** Optional human label. */
+  label?: string;
+}
+
+export interface PolicyViolation {
+  rule_type: PolicyRuleType;
+  effect: PolicyEffect;
+  message: string;
+  contract_id?: string;
+}
+
+export interface PolicyResult {
+  passed: boolean;
+  effect: PolicyEffect;
+  violations: PolicyViolation[];
+  evaluated_rules: number;
+}
+
+export interface AnalyzeDiffRequest {
+  tx_a: string;
+  tx_b: string;
+  network: Network;
+  ecosystem?: EcosystemManifest;
+  options?: AnalyzeOptions;
+}
+
+export interface AnalyzeDiffResponse {
+  product: 'MERIDIAN';
+  version: string;
+  a: StructuredAnalyzeResponse;
+  b: StructuredAnalyzeResponse;
+  diff: ExecutionDiff;
+}
+
+export interface ExecutionDiff {
+  summary: string;
+  verdict_changed: boolean;
+  decision_changed: boolean;
+  blast_radius_delta: number;
+  contracts_added: string[];
+  contracts_removed: string[];
+  auth_added: string[];
+  auth_removed: string[];
+  writes_added: string[];
+  writes_removed: string[];
+  risks_added: RiskItem[];
+  risks_removed: RiskItem[];
 }
 
 export type StructuredAnalyzeResponse = Omit<AnalyzeResponse, 'brief'>;
@@ -177,7 +344,14 @@ export interface GravityFactor {
     | 'active_users'
     | 'direct_dependency'
     | 'transitive_dependency'
-    | 'contract_role';
+    | 'contract_role'
+    | 'fund_exposure'
+    | 'privilege_level'
+    | 'irreversible_write'
+    | 'unknown_dependency'
+    | 'upgradeable_dependency'
+    | 'ttl_archival'
+    | 'slippage_sensitivity';
   label: string;
   weight: number;
   applied: boolean;
@@ -276,6 +450,11 @@ export interface FixStep {
   description: string;
   estimated_cost_stroops: number;
   estimated_time_minutes: number;
+  /** Risk / failure factor this remediation targets. */
+  targets?: string[];
+  contract_id?: string;
+  /** Safer rewrite guidance when action is rewrite. */
+  safer_alternative?: string;
 }
 
 export interface EcosystemManifest {
