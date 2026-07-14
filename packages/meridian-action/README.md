@@ -21,7 +21,9 @@ GitHub Action for running MERIDIAN pre-execution analysis in CI.
 | `tx-file` | No* | — | Path to a file containing the XDR |
 | `network` | No | `testnet` | `mainnet` or `testnet` |
 | `ecosystem-manifest` | No | — | Path to ecosystem manifest JSON |
+| `policy` | No | — | Path to policy rules JSON (pre-merge gates) |
 | `fail-on` | No | `ABORT` | Fail the step on `ABORT` or `WARN` |
+| `fail-on-decision` | No | `rewrite` | Fail when `decision.action` matches (comma-separated) |
 | `api-url` | No | — | MERIDIAN API URL (uses CLI when unset) |
 | `api-key` | No | — | API key for authenticated deployments |
 | `no-brief` | No | `true` | Skip GenAI brief synthesis |
@@ -33,6 +35,7 @@ GitHub Action for running MERIDIAN pre-execution analysis in CI.
 | Output | Description |
 |---|---|
 | `verdict` | `CLEAR`, `WARN`, or `ABORT` |
+| `decision` | `submit`, `hold`, or `rewrite` |
 | `confidence` | Confidence score (0–1) |
 | `brief` | Plain-language risk brief |
 

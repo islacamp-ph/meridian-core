@@ -4,6 +4,7 @@ import type { AnalyzeResponse, BatchAnalyzeResponse, Network } from '../internal
 import { synthesizeBrief, generateFallbackBrief } from '../internal/meridian-ai.js';
 import { resolveAnalyzeInput } from '../lib/input.js';
 import { loadManifest } from '../lib/manifest.js';
+import { loadPolicyRules } from '../lib/policy.js';
 import { failWithError, failWithMeridianError, isMeridianError } from '../lib/errors.js';
 import { printAnalysis, printBatchAnalysis, printJson } from '../lib/output.js';
 import { parseThreshold, withCommonOptions } from '../lib/options.js';
@@ -13,6 +14,7 @@ interface AnalyzeCommandOptions {
   rpcUrl?: string;
   file?: string;
   ecosystem?: string;
+  policy?: string;
   json?: boolean;
   skipField?: boolean;
   skipGravity?: boolean;
@@ -35,12 +37,22 @@ export function analyzeCommand(): Command {
     .option('--skip-field', 'Skip the FIELD dependency-mapping layer')
     .option('--skip-gravity', 'Skip the GRAVITY blast-radius layer')
     .option('--confidence-threshold <n>', 'Minimum confidence required for a CLEAR verdict', parseThreshold)
+    .option('--policy <path>', 'Path to a policy rules JSON file (pre-merge policy gates)')
     .option('--no-brief', 'Skip GenAI BRIEF synthesis (structured layers only)')
     .option('--api-key <key>', 'Anthropic API key for BRIEF synthesis (else read from env)')
     .action(async (tx: string | undefined, options: AnalyzeCommandOptions) => {
       try {
         const input = await resolveAnalyzeInput(tx, options.file, options.network);
         const ecosystem = await loadManifest(options.ecosystem);
+        const policyRules = await loadPolicyRules(options.policy);
+
+        const analyzeOptions = {
+          skip_field: options.skipField,
+          skip_gravity: options.skipGravity,
+          confidence_threshold: options.confidenceThreshold,
+          rpc_url: options.rpcUrl,
+          policy_rules: policyRules,
+        };
 
         if (input.kind === 'batch') {
           const batchResult = await analyzeBatch(
@@ -48,10 +60,9 @@ export function analyzeCommand(): Command {
               ...item,
               ecosystem,
               options: {
-                skip_field: options.skipField,
-                skip_gravity: options.skipGravity,
-                confidence_threshold: options.confidenceThreshold,
-                rpc_url: options.rpcUrl,
+                ...analyzeOptions,
+                ...item.options,
+                policy_rules: item.options?.policy_rules ?? policyRules,
               },
             })),
           );
@@ -71,12 +82,7 @@ export function analyzeCommand(): Command {
           tx: input.tx,
           network: options.network,
           ecosystem,
-          options: {
-            skip_field: options.skipField,
-            skip_gravity: options.skipGravity,
-            confidence_threshold: options.confidenceThreshold,
-            rpc_url: options.rpcUrl,
-          },
+          options: analyzeOptions,
         });
 
         if (isMeridianError(result)) {
@@ -94,6 +100,9 @@ export function analyzeCommand(): Command {
           const briefInput = {
             verdict: result.verdict,
             confidence: result.confidence,
+            decision: result.decision,
+            top_risks: result.top_risks,
+            policy: result.policy,
             trace: result.trace,
             field: result.field,
             gravity: result.gravity,

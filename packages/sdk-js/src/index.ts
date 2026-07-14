@@ -18,6 +18,7 @@ export {
   MERIDIAN_VERSION,
   analyze,
   analyzeBatch,
+  analyzeDiff,
   buildFieldGraph,
   checkTTLWarnings,
   computeConfidence,

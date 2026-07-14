@@ -130,6 +130,7 @@ npm test
 | Command | Description |
 |---|---|
 | `meridian analyze [tx]` | Full pipeline: TRACE + FIELD + GRAVITY + BRIEF *(default command)* |
+| `meridian diff [tx_a] [tx_b]` | Compare two txs (A vs B) for safest rewrite |
 | `meridian trace [tx]` | TRACE only — simulate and report the execution path |
 | `meridian field [tx]` | TRACE + FIELD — map the dependency graph touched by the transaction |
 | `meridian gravity [tx]` | TRACE + FIELD + GRAVITY — score the blast radius |
@@ -147,21 +148,31 @@ npm test
 | `-n, --network <network>` | all | `mainnet` or `testnet` (default: `testnet`) |
 | `--rpc-url <url>` | all | Override the Soroban RPC endpoint instead of reading it from env |
 | `-f, --file <path>` | all | Read the transaction XDR from a file instead of an argument |
-| `-e, --ecosystem <path>` | `field`, `gravity`, `analyze` | Path to an [ecosystem manifest](#ecosystem-manifest) JSON file |
+| `-e, --ecosystem <path>` | `field`, `gravity`, `analyze`, `diff` | Path to an [ecosystem manifest](#ecosystem-manifest) JSON file |
+| `--policy <path>` | `analyze`, `diff` | Path to a policy rules JSON file (pre-merge gates) |
 | `--json` | all | Print raw JSON instead of a formatted report |
-| `--skip-field` | `analyze` | Skip the FIELD dependency-mapping layer |
-| `--skip-gravity` | `analyze` | Skip the GRAVITY blast-radius layer |
+| `--skip-field` | `analyze`, `diff` | Skip the FIELD dependency-mapping layer |
+| `--skip-gravity` | `analyze`, `diff` | Skip the GRAVITY blast-radius layer |
 | `--confidence-threshold <n>` | `analyze` | Minimum confidence (0–1) required for a `CLEAR` verdict |
 | `--no-brief` | `analyze` | Skip GenAI BRIEF synthesis (structured layers only) |
 | `--api-key <key>` | `analyze` | Anthropic API key for BRIEF synthesis (else read from env) |
+| `--file-a` / `--file-b` | `diff` | Read tx A / tx B XDR from files |
 
 Advanced simulation options (`auth_mode`, `field_auth_mode`, `deep_discovery`) are available via the [REST API](#rest-api) `options` object or when calling `analyze()` from `@meridian/core` directly.
+
+Analyze responses include a **decision gateway** (`submit` | `hold` | `rewrite`) and `top_risks`. Pass `--policy` / `options.policy_rules` for deterministic pre-merge gates. Manifest contracts may set `expected_wasm_hash` for upgrade drift detection.
 
 ### Examples
 
 ```bash
 # Full analysis (default command — "analyze" can be omitted)
 meridian analyze <base64-xdr> --network testnet
+
+# Pre-merge policy gates
+meridian analyze --file tx.xdr --policy policy.json --network testnet
+
+# Compare original vs rewrite
+meridian diff --file-a tx-a.xdr --file-b tx-b.xdr --network testnet
 
 # Read the XDR from a file
 meridian analyze --file tx.xdr --network mainnet
@@ -204,7 +215,8 @@ An optional JSON file describing known contracts in your ecosystem, used by `fie
       "network": "testnet",
       "dependencies": ["CDEF...UVW"],
       "active_users": 4200,
-      "criticality": "HIGH"
+      "criticality": "HIGH",
+      "expected_wasm_hash": "<64-char hex SHA-256>"
     }
   ]
 }
@@ -225,8 +237,9 @@ npm run dev --workspace=@meridian/api
 | `GET`  | `/v1/metrics` | In-memory observability snapshot (request counts, confidence distribution) |
 | `GET`  | `/v1/openapi.json` | OpenAPI 3.1 specification |
 | `GET`  | `/v1/docs` | Swagger UI (loads `/v1/openapi.json`) |
-| `POST` | `/v1/analyze` | Full TRACE + FIELD + GRAVITY + BRIEF analysis |
+| `POST` | `/v1/analyze` | Full TRACE + FIELD + GRAVITY + BRIEF analysis (decision + optional policy) |
 | `POST` | `/v1/analyze/batch` | Batch TRACE + FIELD + GRAVITY analysis (no BRIEF per item) |
+| `POST` | `/v1/analyze/diff` | Compare tx A vs B (safest rewrite workflow) |
 | `POST` | `/v1/trace` | TRACE only |
 | `POST` | `/v1/field` | TRACE + FIELD |
 | `POST` | `/v1/gravity` | TRACE + FIELD + GRAVITY |

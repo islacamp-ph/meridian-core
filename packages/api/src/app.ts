@@ -4,12 +4,14 @@ import { Hono } from 'hono';
 import {
   analyze,
   analyzeBatch,
+  analyzeDiff,
   buildFieldGraph,
   MERIDIAN_VERSION,
   scoreGravity,
   trace,
 } from '@meridian/core';
 import type {
+  AnalyzeDiffRequest,
   AnalyzeRequest,
   AnalyzeResponse,
   BatchAnalyzeItemRequest,
@@ -33,11 +35,13 @@ import {
 } from './observability.js';
 import { openApiDocsHtml, openApiDocument } from './openapi.js';
 import {
+  parseAnalyzeDiffRequest,
   parseAnalyzeRequest,
   parseBatchAnalyzeRequest,
   parseFieldRequest,
   parseGravityRequest,
   parseTraceRequest,
+  type AnalyzeDiffRequestBody,
   type BatchAnalyzeRequestBody,
   type FieldRequestBody,
   type GravityRequestBody,
@@ -50,6 +54,7 @@ type Env = {
     requestId: string;
     requestStartedAt: number;
     analyzeBody?: AnalyzeRequest;
+    analyzeDiffBody?: AnalyzeDiffRequestBody;
     batchAnalyzeBody?: BatchAnalyzeRequestBody;
     traceBody?: TraceRequestBody;
     fieldBody?: FieldRequestBody;
@@ -117,6 +122,34 @@ function validatedJsonBody<Key extends keyof Env['Variables'], T>(
 function manifestCacheSuffix(ecosystem: AnalyzeRequest['ecosystem']): string {
   if (!ecosystem) return '';
   return ecosystem.name ?? 'manifest';
+}
+
+function analyzeCacheSuffix(
+  ecosystem: AnalyzeRequest['ecosystem'],
+  options: AnalyzeRequest['options'],
+): string {
+  const parts: string[] = [];
+  const manifest = manifestCacheSuffix(ecosystem);
+  if (manifest) parts.push(manifest);
+  if (options?.policy_rules?.length) {
+    parts.push(`policy-${JSON.stringify(options.policy_rules)}`);
+  }
+  return parts.join(':');
+}
+
+function briefInputFromAnalysis(analysis: Omit<AnalyzeResponse, 'brief'>) {
+  return {
+    verdict: analysis.verdict,
+    confidence: analysis.confidence,
+    decision: analysis.decision,
+    top_risks: analysis.top_risks,
+    policy: analysis.policy,
+    trace: analysis.trace,
+    field: analysis.field,
+    gravity: analysis.gravity,
+    fix_sequence: analysis.fix_sequence,
+    warnings: analysis.warnings,
+  };
 }
 
 async function cachedTrace(
@@ -266,7 +299,7 @@ app.post('/v1/analyze', validatedJsonBody('analyzeBody', parseAnalyzeRequest), a
     body.network,
     body.tx,
     undefined,
-    manifestCacheSuffix(body.ecosystem),
+    analyzeCacheSuffix(body.ecosystem, body.options),
   );
 
   let analysis: Omit<AnalyzeResponse, 'brief'> | MeridianError;
@@ -284,7 +317,7 @@ app.post('/v1/analyze', validatedJsonBody('analyzeBody', parseAnalyzeRequest), a
         body.tx,
         analysis.meta.ledger_sequence,
         analysis,
-        { verdict: analysis.verdict, suffix: manifestCacheSuffix(body.ecosystem) },
+        { verdict: analysis.verdict, suffix: analyzeCacheSuffix(body.ecosystem, body.options) },
       );
     }
   }
@@ -295,15 +328,7 @@ app.post('/v1/analyze', validatedJsonBody('analyzeBody', parseAnalyzeRequest), a
   }
 
   const briefStartedAt = Date.now();
-  const briefResult = await synthesizeBrief({
-    verdict: analysis.verdict,
-    confidence: analysis.confidence,
-    trace: analysis.trace,
-    field: analysis.field,
-    gravity: analysis.gravity,
-    fix_sequence: analysis.fix_sequence,
-    warnings: analysis.warnings,
-  });
+  const briefResult = await synthesizeBrief(briefInputFromAnalysis(analysis));
   const briefMs = Date.now() - briefStartedAt;
 
   let briefFallbackUsed = false;
@@ -312,18 +337,7 @@ app.post('/v1/analyze', validatedJsonBody('analyzeBody', parseAnalyzeRequest), a
 
   if (isMeridianError(briefResult)) {
     briefFallbackUsed = true;
-    const fallbackBrief = await synthesizeBrief(
-      {
-        verdict: analysis.verdict,
-        confidence: analysis.confidence,
-        trace: analysis.trace,
-        field: analysis.field,
-        gravity: analysis.gravity,
-        fix_sequence: analysis.fix_sequence,
-        warnings: analysis.warnings,
-      },
-      { apiKey: undefined },
-    );
+    const fallbackBrief = await synthesizeBrief(briefInputFromAnalysis(analysis), { apiKey: undefined });
 
     brief =
       typeof fallbackBrief === 'string'
@@ -379,6 +393,22 @@ app.post('/v1/analyze/batch', validatedJsonBody('batchAnalyzeBody', parseBatchAn
 
   const result = await analyzeBatch(requests);
   recordBatchObservability({ requestId, route: '/v1/analyze/batch', result });
+  return c.json(result);
+});
+
+/**
+ * POST /v1/analyze/diff — compare two transactions (A vs B) for safest rewrite workflows
+ */
+app.post('/v1/analyze/diff', validatedJsonBody('analyzeDiffBody', parseAnalyzeDiffRequest), async (c) => {
+  const body = c.get('analyzeDiffBody')!;
+  const requestId = c.get('requestId');
+
+  const result = await analyzeDiff(body as AnalyzeDiffRequest);
+  if (isMeridianError(result)) {
+    recordEndpointError(requestId, '/v1/analyze/diff', result, 502);
+    return c.json(result, 502);
+  }
+
   return c.json(result);
 });
 

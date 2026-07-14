@@ -50,6 +50,20 @@ batch = client.analyze_batch({
 print(batch["summary"])
 ```
 
+### Diff (safest rewrite)
+
+```python
+diff = client.analyze_diff({
+    "tx_a": "<baseline-xdr>",
+    "tx_b": "<rewrite-xdr>",
+    "network": "testnet",
+    "options": {
+        "policy_rules": [{"type": "unknown_contract", "effect": "ABORT"}],
+    },
+})
+print(diff["diff"]["summary"], diff["b"]["decision"]["action"])
+```
+
 ## Local engines
 
 For offline analysis without the HTTP API, use the JavaScript engines via Node or call the `meridian-core` CLI. Native Python engine bindings are planned for a future release.

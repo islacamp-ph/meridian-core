@@ -20,7 +20,7 @@ const MAX_BRIEF_WORDS = 300;
 
 const BRIEF_SYSTEM_PROMPT = `You are MERIDIAN BRIEF — a Stellar pre-execution risk synthesis engine.
 
-Your job: produce a structured mission briefing from TRACE, FIELD, and GRAVITY JSON inputs.
+Your job: produce a structured mission briefing from TRACE, FIELD, GRAVITY, decision gateway, and optional policy JSON inputs.
 You must NEVER hallucinate contract names, addresses, ledger values, or user counts.
 Every specific fact must come from the provided structured data.
 
@@ -32,16 +32,22 @@ Every specific fact must come from the provided structured data.
 - TX_FAILED: General simulation failure
 
 ## Output Format (strict, max 300 words)
-1. **Verdict Reason** (1-2 sentences): Why CLEAR, WARN, or ABORT
-2. **Affected Parties**: Who is impacted and how many users (from GRAVITY data only)
-3. **Fix Sequence**: Numbered steps with estimated stroop costs (from fix_sequence data)
-4. **Confidence**: Explain confidence score; if < 0.75, explicitly recommend re-running after fixes
+1. **Decision** (1 sentence): State submit / hold / rewrite and the primary reason from decision.reason
+2. **Verdict Reason** (1-2 sentences): Why CLEAR, WARN, or ABORT
+3. **Top Risks**: List up to 3 risks from top_risks (severity + title). If empty, say none.
+4. **Policy** (if policy present): Whether policy passed and any ABORT/WARN violations
+5. **Affected Parties**: Who is impacted and how many users (from GRAVITY data only)
+6. **Fix Sequence**: Numbered steps with estimated stroop costs (from fix_sequence data)
+7. **Confidence**: Explain confidence score; if < 0.75, explicitly recommend re-running after fixes
 
 Never use conversational prose. Be direct and actionable.`;
 
 export interface BriefInput {
   verdict: Verdict;
   confidence: number;
+  decision?: AnalyzeResponse['decision'];
+  top_risks?: AnalyzeResponse['top_risks'];
+  policy?: AnalyzeResponse['policy'];
   trace: TraceResult;
   field: FieldResult;
   gravity: GravityResult;
@@ -90,7 +96,30 @@ function truncateToWordLimit(text: string, maxWords: number): string {
 export function generateFallbackBrief(input: BriefInput): string {
   const lines: string[] = [];
 
+  if (input.decision) {
+    lines.push(
+      `**Decision: ${input.decision.action.toUpperCase()}** — ${input.decision.reason}`,
+    );
+  }
+
   lines.push(`**Verdict: ${input.verdict}** (confidence: ${input.confidence})`);
+
+  if (input.top_risks && input.top_risks.length > 0) {
+    lines.push('**Top Risks**:');
+    for (const risk of input.top_risks.slice(0, 3)) {
+      lines.push(`- [${risk.severity}] ${risk.title}: ${risk.why_it_matters}`);
+    }
+  }
+
+  if (input.policy) {
+    const effect = input.policy.passed ? 'PASSED' : input.policy.effect;
+    lines.push(
+      `**Policy**: ${effect} (${input.policy.evaluated_rules} rule(s), ${input.policy.violations.length} violation(s)).`,
+    );
+    for (const violation of input.policy.violations.slice(0, 3)) {
+      lines.push(`- [${violation.effect}] ${violation.rule_type}: ${violation.message}`);
+    }
+  }
 
   if (!input.trace.success && input.trace.failure_point) {
     const fp = input.trace.failure_point;
@@ -109,6 +138,12 @@ export function generateFallbackBrief(input: BriefInput): string {
 
   if (input.gravity.critical.length > 0) {
     lines.push(`**Critical contracts**: ${input.gravity.critical.join(', ')}`);
+  }
+
+  if (input.field.upgrade_warnings && input.field.upgrade_warnings.length > 0) {
+    lines.push(
+      `**Upgrade drift**: ${input.field.upgrade_warnings.length} contract(s) with Wasm hash mismatch.`,
+    );
   }
 
   if (input.fix_sequence && input.fix_sequence.length > 0) {
@@ -137,6 +172,9 @@ function buildBriefContextPayload(input: BriefInput) {
   return {
     verdict: input.verdict,
     confidence: input.confidence,
+    decision: input.decision,
+    top_risks: input.top_risks,
+    policy: input.policy,
     trace: {
       success: input.trace.success,
       failure_point: input.trace.failure_point,
@@ -149,6 +187,7 @@ function buildBriefContextPayload(input: BriefInput) {
       contracts_mapped: input.field.contracts_mapped,
       dependency_graph: input.field.dependency_graph,
       ttl_warnings: input.field.ttl_warnings,
+      upgrade_warnings: input.field.upgrade_warnings,
       manifest_coverage: input.field.manifest_coverage,
     },
     gravity: {

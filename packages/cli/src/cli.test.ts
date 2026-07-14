@@ -8,6 +8,7 @@ vi.mock('./internal/meridian-core.js', () => ({
   buildFieldGraph: vi.fn(),
   scoreGravity: vi.fn(),
   analyze: vi.fn(),
+  analyzeDiff: vi.fn(),
   MERIDIAN_VERSION: 'test-engine-version',
 }));
 
@@ -16,9 +17,10 @@ vi.mock('./internal/meridian-ai.js', () => ({
 }));
 
 import { buildProgram } from './cli.js';
-import { trace } from './internal/meridian-core.js';
+import { analyzeDiff, trace } from './internal/meridian-core.js';
 
 const mockedTrace = vi.mocked(trace);
+const mockedAnalyzeDiff = vi.mocked(analyzeDiff);
 
 async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), 'meridian-cli-test-'));
@@ -39,6 +41,7 @@ describe('CLI integration', () => {
     stderr = [];
     exitCode = undefined;
     mockedTrace.mockReset();
+    mockedAnalyzeDiff.mockReset();
 
     vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
       stdout.push(args.map(String).join(' '));
@@ -182,5 +185,58 @@ describe('CLI integration', () => {
     expect(exitCode).toBe(1);
     const body = JSON.parse(stdout[0] ?? '{}');
     expect(body.code).toBe('TRACE_SIMULATION_FAILED');
+  });
+
+  it('runs diff with mocked core and prints JSON', async () => {
+    mockedAnalyzeDiff.mockResolvedValue({
+      product: 'MERIDIAN',
+      version: '0.1.1',
+      a: { verdict: 'WARN', decision: { action: 'hold' } },
+      b: { verdict: 'CLEAR', decision: { action: 'submit' } },
+      diff: {
+        summary: 'Submit decision changed between A and B.',
+        verdict_changed: true,
+        decision_changed: true,
+        blast_radius_delta: -10,
+        contracts_added: [],
+        contracts_removed: [],
+        auth_added: [],
+        auth_removed: [],
+        writes_added: [],
+        writes_removed: [],
+        risks_added: [],
+        risks_removed: [],
+      },
+    });
+
+    await withTempDir(async (dir) => {
+      const fileA = join(dir, 'a.xdr');
+      const fileB = join(dir, 'b.xdr');
+      await writeFile(fileA, 'AAAA');
+      await writeFile(fileB, 'BBBB');
+
+      await buildProgram().parseAsync([
+        'node',
+        'meridian',
+        'diff',
+        '--file-a',
+        fileA,
+        '--file-b',
+        fileB,
+        '--network',
+        'testnet',
+        '--json',
+      ]);
+    });
+
+    const body = JSON.parse(stdout[0] ?? '{}');
+    expect(body.diff.decision_changed).toBe(true);
+    expect(mockedAnalyzeDiff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tx_a: 'AAAA',
+        tx_b: 'BBBB',
+        network: 'testnet',
+      }),
+    );
   });
 });

@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { CLI_VERSION } from './version.js';
 import { analyzeCommand } from './commands/analyze.js';
+import { diffCommand } from './commands/diff.js';
 import { traceCommand } from './commands/trace.js';
 import { fieldCommand } from './commands/field.js';
 import { gravityCommand } from './commands/gravity.js';
@@ -25,8 +26,10 @@ export function buildProgram(): Command {
       `
 Examples:
   $ meridian analyze <base64-xdr> --network testnet
+  $ meridian analyze --file tx.xdr --policy policy.json --network testnet
   $ cat tx.xdr | meridian analyze --network mainnet --json
   $ meridian analyze --file txs.json --network testnet
+  $ meridian diff --file-a tx-a.xdr --file-b tx-b.xdr --network testnet
   $ meridian trace --file tx.xdr --network testnet
   $ meridian gravity <base64-xdr> --ecosystem manifest.json
   $ meridian init --name my-ecosystem --network testnet
@@ -40,6 +43,7 @@ Environment:
     );
 
   program.addCommand(analyzeCommand(), { isDefault: true });
+  program.addCommand(diffCommand());
   program.addCommand(traceCommand());
   program.addCommand(fieldCommand());
   program.addCommand(gravityCommand());

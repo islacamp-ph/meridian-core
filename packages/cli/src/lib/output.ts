@@ -1,7 +1,9 @@
 import pc from 'picocolors';
 import type {
+  AnalyzeDiffResponse,
   AnalyzeResponse,
   BatchAnalyzeResponse,
+  DecisionAction,
   FieldResult,
   GravityResult,
   TraceResult,
@@ -33,6 +35,22 @@ function verdictBadge(verdict: Verdict): string {
       return pc.bgRed(pc.white(pc.bold(' ABORT ')));
     default:
       return verdict;
+  }
+}
+
+/**
+ * Colorize a decision action badge.
+ */
+function decisionBadge(action: DecisionAction): string {
+  switch (action) {
+    case 'submit':
+      return pc.bgGreen(pc.black(' SUBMIT '));
+    case 'hold':
+      return pc.bgYellow(pc.black(' HOLD '));
+    case 'rewrite':
+      return pc.bgMagenta(pc.white(pc.bold(' REWRITE ')));
+    default:
+      return action;
   }
 }
 
@@ -107,6 +125,14 @@ export function printField(result: FieldResult): void {
       );
     }
   }
+  if (result.upgrade_warnings && result.upgrade_warnings.length > 0) {
+    console.log(`  ${pc.yellow('upgrade_warnings')}:`);
+    for (const warning of result.upgrade_warnings) {
+      console.log(
+        `    - ${warning.contract_id}: expected=${warning.expected_wasm_hash.slice(0, 12)}… observed=${warning.on_chain_wasm_hash.slice(0, 12)}…`,
+      );
+    }
+  }
   if (result.dependency_graph.length > 0) {
     console.log(`  ${pc.dim('dependency_graph')}:`);
     for (const node of result.dependency_graph) {
@@ -150,7 +176,35 @@ export function printGravity(result: GravityResult): void {
  */
 export function printAnalysis(response: AnalyzeResponse): void {
   console.log('');
-  console.log(`${pc.bold('MERIDIAN')} v${response.version}  ${verdictBadge(response.verdict)}  confidence=${response.confidence}`);
+  console.log(
+    `${pc.bold('MERIDIAN')} v${response.version}  ${verdictBadge(response.verdict)}  ${decisionBadge(response.decision.action)}  confidence=${response.confidence}`,
+  );
+
+  section('DECISION');
+  field('action', response.decision.action);
+  field('reason', response.decision.reason);
+  field('confidence', response.decision.confidence);
+  const topRisks = response.top_risks.length > 0 ? response.top_risks : response.decision.top_risks;
+  if (topRisks.length > 0) {
+    console.log(`  ${pc.dim('top_risks')}:`);
+    for (const risk of topRisks.slice(0, 3)) {
+      console.log(`    - [${risk.severity}] ${risk.title} — ${risk.why_it_matters}`);
+    }
+  }
+
+  if (response.policy) {
+    section('POLICY');
+    field('passed', response.policy.passed ? pc.green('true') : pc.red('false'));
+    field('effect', response.policy.effect);
+    field('evaluated_rules', response.policy.evaluated_rules);
+    if (response.policy.violations.length > 0) {
+      console.log(`  ${pc.dim('violations')}:`);
+      for (const violation of response.policy.violations) {
+        const contract = violation.contract_id ? ` (${violation.contract_id})` : '';
+        console.log(`    - [${violation.effect}] ${violation.rule_type}${contract}: ${violation.message}`);
+      }
+    }
+  }
 
   printTrace(response.trace);
   printField(response.field);
@@ -222,6 +276,66 @@ export function printAnalysis(response: AnalyzeResponse): void {
   console.log('');
 }
 
+/**
+ * Print an AnalyzeDiffResponse in human-readable form.
+ */
+export function printDiff(response: AnalyzeDiffResponse): void {
+  console.log('');
+  console.log(`${pc.bold('MERIDIAN')} v${response.version}  ${pc.bgMagenta(pc.white(' DIFF '))}`);
+
+  section('SUMMARY');
+  console.log(`  ${response.diff.summary}`);
+  field('verdict_changed', response.diff.verdict_changed);
+  field('decision_changed', response.diff.decision_changed);
+  field('blast_radius_delta', response.diff.blast_radius_delta);
+
+  section('A');
+  field('verdict', response.a.verdict);
+  field('decision', response.a.decision.action);
+  field('confidence', response.a.confidence);
+  field('blast_radius', response.a.gravity.blast_radius);
+
+  section('B');
+  field('verdict', response.b.verdict);
+  field('decision', response.b.decision.action);
+  field('confidence', response.b.confidence);
+  field('blast_radius', response.b.gravity.blast_radius);
+
+  if (response.diff.contracts_added.length > 0 || response.diff.contracts_removed.length > 0) {
+    section('CONTRACTS');
+    if (response.diff.contracts_added.length > 0) {
+      field('added', response.diff.contracts_added.join(', '));
+    }
+    if (response.diff.contracts_removed.length > 0) {
+      field('removed', response.diff.contracts_removed.join(', '));
+    }
+  }
+
+  if (response.diff.auth_added.length > 0 || response.diff.auth_removed.length > 0) {
+    section('AUTH');
+    if (response.diff.auth_added.length > 0) field('added', response.diff.auth_added.join(', '));
+    if (response.diff.auth_removed.length > 0) field('removed', response.diff.auth_removed.join(', '));
+  }
+
+  if (response.diff.writes_added.length > 0 || response.diff.writes_removed.length > 0) {
+    section('WRITES');
+    if (response.diff.writes_added.length > 0) field('added', response.diff.writes_added.join(', '));
+    if (response.diff.writes_removed.length > 0) field('removed', response.diff.writes_removed.join(', '));
+  }
+
+  if (response.diff.risks_added.length > 0 || response.diff.risks_removed.length > 0) {
+    section('RISKS');
+    for (const risk of response.diff.risks_added) {
+      console.log(`  ${pc.red('+')} [${risk.severity}] ${risk.title}`);
+    }
+    for (const risk of response.diff.risks_removed) {
+      console.log(`  ${pc.green('-')} [${risk.severity}] ${risk.title}`);
+    }
+  }
+
+  console.log('');
+}
+
 export function printBatchAnalysis(response: BatchAnalyzeResponse): void {
   console.log('');
   console.log(`${pc.bold('MERIDIAN')} v${response.version}  ${pc.bgMagenta(pc.white(' BATCH '))}`);
@@ -264,8 +378,9 @@ export function printBatchAnalysis(response: BatchAnalyzeResponse): void {
       continue;
     }
 
+    const decision = item.result?.decision.action ?? '—';
     console.log(
-      `  - ${pc.bold(item.id)} [${item.result?.verdict}] risk=${item.risk_score} network=${item.network} confidence=${item.result?.confidence} blast=${item.result?.gravity.blast_radius}`,
+      `  - ${pc.bold(item.id)} [${item.result?.verdict}/${decision}] risk=${item.risk_score} network=${item.network} confidence=${item.result?.confidence} blast=${item.result?.gravity.blast_radius}`,
     );
   }
 

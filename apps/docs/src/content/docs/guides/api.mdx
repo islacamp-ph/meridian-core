@@ -12,8 +12,9 @@ description: HTTP endpoints for MERIDIAN analysis
 | `GET` | `/v1/metrics` | Observability snapshot |
 | `GET` | `/v1/openapi.json` | OpenAPI 3.1 spec |
 | `GET` | `/v1/docs` | Swagger UI |
-| `POST` | `/v1/analyze` | Full analysis with brief |
+| `POST` | `/v1/analyze` | Full analysis with decision, policy, and brief |
 | `POST` | `/v1/analyze/batch` | Batch analysis (no brief) |
+| `POST` | `/v1/analyze/diff` | Compare tx A vs B (safest rewrite) |
 | `POST` | `/v1/trace` | TRACE only |
 | `POST` | `/v1/field` | TRACE + FIELD |
 | `POST` | `/v1/gravity` | TRACE + FIELD + GRAVITY |
@@ -24,15 +25,56 @@ description: HTTP endpoints for MERIDIAN analysis
 {
   "tx": "<base64-xdr>",
   "network": "testnet",
-  "ecosystem": { "name": "my-ecosystem", "version": "1.0.0", "contracts": [] },
+  "ecosystem": {
+    "name": "my-ecosystem",
+    "version": "1.0.0",
+    "contracts": [
+      {
+        "name": "vault",
+        "address": "C…",
+        "network": "testnet",
+        "expected_wasm_hash": "<64-char hex SHA-256>"
+      }
+    ]
+  },
   "options": {
     "auth_mode": "enforce",
     "field_auth_mode": "record",
     "deep_discovery": false,
-    "confidence_threshold": 0.75
+    "confidence_threshold": 0.75,
+    "policy_rules": [
+      { "type": "unknown_contract", "effect": "ABORT" },
+      { "type": "upgrade_risk", "effect": "WARN" },
+      { "type": "max_blast_radius", "threshold": 50, "effect": "ABORT" }
+    ]
   }
 }
 ```
+
+### Response highlights
+
+| Field | Meaning |
+|---|---|
+| `verdict` | `CLEAR` \| `WARN` \| `ABORT` |
+| `decision.action` | Pre-submit gateway: `submit` \| `hold` \| `rewrite` |
+| `decision.reason` | Why that action was chosen |
+| `top_risks` | Up to 3 ranked risks (also on `decision.top_risks`) |
+| `policy` | Present when `options.policy_rules` were supplied |
+
+## Diff request
+
+```json
+{
+  "tx_a": "<baseline-xdr>",
+  "tx_b": "<rewrite-xdr>",
+  "network": "testnet",
+  "options": {
+    "policy_rules": [{ "type": "unknown_contract" }]
+  }
+}
+```
+
+Returns `a`, `b`, and a `diff` summarizing verdict/decision changes, blast-radius delta, and contract/auth/write/risk adds/removes.
 
 ## Authentication
 

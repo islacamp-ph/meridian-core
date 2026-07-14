@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@meridian/core', () => ({
   analyze: vi.fn(),
   analyzeBatch: vi.fn(),
+  analyzeDiff: vi.fn(),
   trace: vi.fn(),
   buildFieldGraph: vi.fn(),
   scoreGravity: vi.fn(),
@@ -20,13 +21,14 @@ vi.mock('@meridian/ai', () => ({
 }));
 
 import { app } from './app.js';
-import { analyze, analyzeBatch, buildFieldGraph, scoreGravity, trace } from '@meridian/core';
+import { analyze, analyzeBatch, analyzeDiff, buildFieldGraph, scoreGravity, trace } from '@meridian/core';
 import { synthesizeBrief } from '@meridian/ai';
 import { clearMemoryCache } from './cache/index.js';
 import { resetRateLimitState } from './middleware/rateLimit.js';
 
 const mockedAnalyze = vi.mocked(analyze);
 const mockedAnalyzeBatch = vi.mocked(analyzeBatch);
+const mockedAnalyzeDiff = vi.mocked(analyzeDiff);
 const mockedTrace = vi.mocked(trace);
 const mockedBuildFieldGraph = vi.mocked(buildFieldGraph);
 const mockedScoreGravity = vi.mocked(scoreGravity);
@@ -268,6 +270,132 @@ describe('POST /v1/analyze', () => {
     expect(body.brief).toBe('fallback brief');
     expect(body.warnings).toContain('BRIEF synthesis failed');
   });
+
+  it('forwards policy_rules and expected_wasm_hash to analyze()', async () => {
+    mockedAnalyze.mockResolvedValue(makeAnalysisResult());
+    mockedSynthesizeBrief.mockResolvedValue('brief text');
+    const wasmHash = 'ab'.repeat(32);
+
+    const res = await app.request('/v1/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tx: 'AAAA',
+        network: 'testnet',
+        ecosystem: {
+          name: 'demo',
+          version: '1.0.0',
+          contracts: [
+            {
+              name: 'vault',
+              address: 'CVAULT',
+              network: 'testnet',
+              expected_wasm_hash: wasmHash,
+            },
+          ],
+        },
+        options: {
+          policy_rules: [
+            { type: 'unknown_contract', effect: 'ABORT' },
+            { type: 'max_blast_radius', threshold: 40 },
+          ],
+        },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockedAnalyze).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ecosystem: expect.objectContaining({
+          contracts: [
+            expect.objectContaining({
+              address: 'CVAULT',
+              expected_wasm_hash: wasmHash,
+            }),
+          ],
+        }),
+        options: expect.objectContaining({
+          policy_rules: [
+            { type: 'unknown_contract', effect: 'ABORT' },
+            { type: 'max_blast_radius', threshold: 40 },
+          ],
+        }),
+      }),
+    );
+    expect(mockedSynthesizeBrief).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: expect.objectContaining({ action: 'hold' }),
+        top_risks: expect.any(Array),
+      }),
+    );
+  });
+
+  it('returns 400 for invalid policy_rules', async () => {
+    const res = await app.request('/v1/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tx: 'AAAA',
+        network: 'testnet',
+        options: { policy_rules: [{ type: 'not_a_rule' }] },
+      }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.details.some((d: string) => d.includes('policy_rules'))).toBe(true);
+  });
+});
+
+describe('POST /v1/analyze/diff', () => {
+  beforeEach(() => {
+    mockedAnalyzeDiff.mockReset();
+  });
+
+  it('returns 400 when tx_a or tx_b is missing', async () => {
+    const res = await app.request('/v1/analyze/diff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tx_a: 'AAAA', network: 'testnet' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns a diff on happy path', async () => {
+    const analysis = makeAnalysisResult();
+    mockedAnalyzeDiff.mockResolvedValue({
+      product: 'MERIDIAN',
+      version: '0.1.1',
+      a: analysis,
+      b: { ...analysis, decision: { ...analysis.decision, action: 'submit' } },
+      diff: {
+        summary: 'Submit decision changed between A and B.',
+        verdict_changed: false,
+        decision_changed: true,
+        blast_radius_delta: 0,
+        contracts_added: [],
+        contracts_removed: [],
+        auth_added: [],
+        auth_removed: [],
+        writes_added: [],
+        writes_removed: [],
+        risks_added: [],
+        risks_removed: [],
+      },
+    });
+
+    const res = await app.request('/v1/analyze/diff', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tx_a: 'AAAA', tx_b: 'BBBB', network: 'testnet' }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.diff.decision_changed).toBe(true);
+    expect(mockedAnalyzeDiff).toHaveBeenCalledWith(
+      expect.objectContaining({ tx_a: 'AAAA', tx_b: 'BBBB', network: 'testnet' }),
+    );
+  });
 });
 
 describe('GET /v1/metrics', () => {
@@ -477,6 +605,9 @@ describe('GET /v1/openapi.json', () => {
     const body = await res.json();
     expect(body.openapi).toBe('3.1.0');
     expect(body.paths['/v1/analyze']).toBeDefined();
+    expect(body.paths['/v1/analyze/diff']).toBeDefined();
+    expect(body.components.schemas.AnalyzeOptions.properties.policy_rules).toBeDefined();
+    expect(body.components.schemas.ManifestContract.properties.expected_wasm_hash).toBeDefined();
   });
 });
 

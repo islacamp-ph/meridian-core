@@ -93,6 +93,41 @@ describe('generateFallbackBrief', () => {
     expect(brief).toContain('Missing authorization');
   });
 
+  it('includes decision and top risks when provided', () => {
+    const brief = generateFallbackBrief({
+      ...baseInput,
+      decision: {
+        action: 'rewrite',
+        reason: 'Do not submit until auth is fixed',
+        confidence: 0.3,
+        top_risks: [],
+      },
+      top_risks: [
+        {
+          id: 'r1',
+          severity: 'CRITICAL',
+          title: 'Auth required',
+          why_it_matters: 'Simulation failed on require_auth',
+        },
+      ],
+      policy: {
+        passed: false,
+        effect: 'ABORT',
+        evaluated_rules: 1,
+        violations: [
+          {
+            rule_type: 'unknown_contract',
+            effect: 'ABORT',
+            message: 'Unknown contract',
+          },
+        ],
+      },
+    });
+    expect(brief).toContain('REWRITE');
+    expect(brief).toContain('Auth required');
+    expect(brief).toContain('Policy');
+  });
+
   it('includes affected users from gravity data', () => {
     const brief = generateFallbackBrief(baseInput);
     expect(brief).toContain('150');

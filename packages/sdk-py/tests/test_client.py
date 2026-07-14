@@ -38,3 +38,14 @@ def test_api_key_header(httpx_mock):
     client.health()
     request = httpx_mock.get_request()
     assert request.headers["authorization"] == "Bearer secret"
+
+
+def test_analyze_diff(httpx_mock):
+    httpx_mock.add_response(json={"diff": {"decision_changed": True}})
+    client = MeridianClient("https://api.example.com")
+    result = client.analyze_diff(
+        {"tx_a": "AAAA", "tx_b": "BBBB", "network": "testnet"}
+    )
+    assert result["diff"]["decision_changed"] is True
+    request = httpx_mock.get_request()
+    assert request.url.path == "/v1/analyze/diff"

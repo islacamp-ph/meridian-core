@@ -35,6 +35,7 @@ meridian-core --help
 | Command | Description |
 |---|---|
 | `meridian analyze [tx]` | Full pipeline: TRACE + FIELD + GRAVITY + BRIEF *(default command)* |
+| `meridian diff [tx_a] [tx_b]` | Compare two txs (A vs B) for safest rewrite |
 | `meridian trace [tx]` | TRACE only — simulate and report the execution path |
 | `meridian field [tx]` | TRACE + FIELD — map the dependency graph touched by the transaction |
 | `meridian gravity [tx]` | TRACE + FIELD + GRAVITY — score the blast radius |
@@ -52,13 +53,15 @@ meridian-core --help
 | `-n, --network <network>` | all | `mainnet` or `testnet` (default: `testnet`) |
 | `--rpc-url <url>` | all | Override the Soroban RPC endpoint instead of reading it from env |
 | `-f, --file <path>` | all | Read the transaction XDR from a file instead of an argument |
-| `-e, --ecosystem <path>` | `field`, `gravity`, `analyze` | Path to an ecosystem manifest JSON file |
+| `-e, --ecosystem <path>` | `field`, `gravity`, `analyze`, `diff` | Path to an ecosystem manifest JSON file |
+| `--policy <path>` | `analyze`, `diff` | Path to a policy rules JSON file (pre-merge gates) |
 | `--json` | all | Print raw JSON instead of a formatted report |
-| `--skip-field` | `analyze` | Skip the FIELD dependency-mapping layer |
-| `--skip-gravity` | `analyze` | Skip the GRAVITY blast-radius layer |
+| `--skip-field` | `analyze`, `diff` | Skip the FIELD dependency-mapping layer |
+| `--skip-gravity` | `analyze`, `diff` | Skip the GRAVITY blast-radius layer |
 | `--confidence-threshold <n>` | `analyze` | Minimum confidence (0–1) required for a `CLEAR` verdict |
 | `--no-brief` | `analyze` | Skip GenAI BRIEF synthesis (structured layers only) |
 | `--api-key <key>` | `analyze` | Anthropic API key for BRIEF synthesis (else read from env) |
+| `--file-a` / `--file-b` | `diff` | Read tx A / tx B XDR from files |
 
 ## Examples
 

@@ -72,6 +72,10 @@ class MeridianClient:
     def analyze_batch(self, request: BatchAnalyzeRequest) -> BatchAnalyzeResponse:
         return self._post("/v1/analyze/batch", request)
 
+    def analyze_diff(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Compare two transactions (A vs B) for safest-rewrite workflows."""
+        return self._post("/v1/analyze/diff", request)
+
     def trace(self, tx: str, network: str) -> dict[str, Any]:
         return self._post("/v1/trace", {"tx": tx, "network": network})
 

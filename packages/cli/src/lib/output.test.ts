@@ -150,6 +150,40 @@ describe('printAnalysis', () => {
     expect(output).toContain('confidence_bucket');
     expect(output).toContain('layer_timings_ms');
   });
+
+  it('prints decision gateway and top risks', () => {
+    spyConsole();
+    const analysis = makeAnalysis();
+    analysis.top_risks = [
+      {
+        id: 'risk-1',
+        severity: 'HIGH',
+        title: 'Auth gap',
+        why_it_matters: 'Missing require_auth',
+      },
+    ];
+    analysis.policy = {
+      passed: false,
+      effect: 'ABORT',
+      evaluated_rules: 1,
+      violations: [
+        {
+          rule_type: 'unknown_contract',
+          effect: 'ABORT',
+          message: 'Unknown contract touched',
+          contract_id: 'CUNKNOWN',
+        },
+      ],
+    };
+    printAnalysis(analysis);
+
+    const output = logs.join('\n');
+    expect(output).toContain('DECISION');
+    expect(output).toContain('hold');
+    expect(output).toContain('Auth gap');
+    expect(output).toContain('POLICY');
+    expect(output).toContain('unknown_contract');
+  });
 });
 
 describe('printBatchAnalysis', () => {

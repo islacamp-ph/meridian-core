@@ -1,4 +1,4 @@
-import type { AnalyzeRequest, Network } from '@meridian/core';
+import type { AnalyzeDiffRequest, AnalyzeRequest, Network, PolicyRule } from '@meridian/core';
 
 export interface BatchAnalyzeRequestBody {
   items: Array<{
@@ -23,6 +23,20 @@ export interface FieldRequestBody extends TraceRequestBody {
 }
 
 export type GravityRequestBody = FieldRequestBody;
+
+export type AnalyzeDiffRequestBody = AnalyzeDiffRequest;
+
+const POLICY_RULE_TYPES = [
+  'unknown_contract',
+  'admin_auth_path',
+  'max_blast_radius',
+  'allowlist_only',
+  'ttl_critical',
+  'upgrade_risk',
+  'min_confidence',
+] as const;
+
+const POLICY_EFFECTS = ['ABORT', 'WARN', 'ALLOW'] as const;
 
 export interface ValidationFailure {
   message: string;
@@ -95,6 +109,33 @@ export function parseFieldRequest(value: unknown): ValidationResult<FieldRequest
 
 export function parseGravityRequest(value: unknown): ValidationResult<GravityRequestBody> {
   return parseTxAndNetworkWithManifestRequest(value, 'gravity');
+}
+
+export function parseAnalyzeDiffRequest(value: unknown): ValidationResult<AnalyzeDiffRequestBody> {
+  if (!isRecord(value)) {
+    return invalid(
+      'Invalid JSON request body',
+      'Send an object with tx_a, tx_b (base64 XDR) and network fields.',
+      ['Request body must be a JSON object.'],
+    );
+  }
+
+  const details: string[] = [];
+  const txA = readRequiredString(value.tx_a, 'tx_a', details);
+  const txB = readRequiredString(value.tx_b, 'tx_b', details);
+  const network = readNetwork(value.network, 'network', details);
+  const ecosystem = readManifest(value.ecosystem, 'ecosystem', details);
+  const options = readAnalyzeOptions(value.options, 'options', details);
+
+  if (details.length > 0 || !txA || !txB || !network) {
+    return invalid(
+      'Invalid analyze diff request body',
+      'Provide tx_a and tx_b (base64 XDR strings) and network (mainnet | testnet).',
+      details,
+    );
+  }
+
+  return success({ tx_a: txA, tx_b: txB, network, ecosystem, options });
 }
 
 function parseTxAndNetworkRequest(value: unknown, route: string): ValidationResult<TraceRequestBody> {
@@ -213,7 +254,82 @@ function readAnalyzeOptions(
     else result.deep_discovery = value.deep_discovery;
   }
 
+  if (value.policy_rules !== undefined) {
+    const rules = readPolicyRules(value.policy_rules, `${path}.policy_rules`, details);
+    if (rules) result.policy_rules = rules;
+  }
+
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function readPolicyRules(
+  value: unknown,
+  path: string,
+  details: string[],
+): PolicyRule[] | undefined {
+  if (!Array.isArray(value)) {
+    details.push(`${path} must be an array.`);
+    return undefined;
+  }
+
+  const rules = value
+    .map((rule, index) => readPolicyRule(rule, `${path}[${index}]`, details))
+    .filter((rule): rule is PolicyRule => rule !== null);
+
+  return rules.length > 0 ? rules : undefined;
+}
+
+function readPolicyRule(
+  value: unknown,
+  path: string,
+  details: string[],
+): PolicyRule | null {
+  if (!isRecord(value)) {
+    details.push(`${path} must be an object.`);
+    return null;
+  }
+
+  const type = readOptionalEnum(value.type, `${path}.type`, POLICY_RULE_TYPES, details);
+  if (!type) {
+    if (value.type === undefined) details.push(`${path}.type is required.`);
+    return null;
+  }
+
+  const effect = readOptionalEnum(value.effect, `${path}.effect`, POLICY_EFFECTS, details);
+  const allowlist = readOptionalStringArray(value.allowlist, `${path}.allowlist`, details);
+  const label = readOptionalString(value.label, `${path}.label`, details);
+
+  let threshold: number | undefined;
+  if (value.threshold !== undefined) {
+    if (typeof value.threshold !== 'number' || Number.isNaN(value.threshold) || value.threshold < 0) {
+      details.push(`${path}.threshold must be a non-negative number.`);
+    } else {
+      threshold = value.threshold;
+    }
+  }
+
+  let minConfidence: number | undefined;
+  if (value.min_confidence !== undefined) {
+    if (
+      typeof value.min_confidence !== 'number' ||
+      Number.isNaN(value.min_confidence) ||
+      value.min_confidence < 0 ||
+      value.min_confidence > 1
+    ) {
+      details.push(`${path}.min_confidence must be a number between 0 and 1.`);
+    } else {
+      minConfidence = value.min_confidence;
+    }
+  }
+
+  return {
+    type,
+    ...(effect !== undefined ? { effect } : {}),
+    ...(threshold !== undefined ? { threshold } : {}),
+    ...(allowlist !== undefined ? { allowlist } : {}),
+    ...(minConfidence !== undefined ? { min_confidence: minConfidence } : {}),
+    ...(label !== undefined ? { label } : {}),
+  };
 }
 
 function readManifest(
@@ -259,6 +375,7 @@ function readManifestContract(
   const activeUsers = readOptionalNumber(value.active_users, `${path}.active_users`, details);
   const criticality = readOptionalEnum(value.criticality, `${path}.criticality`, ['HIGH', 'MEDIUM', 'LOW'], details);
   const role = readOptionalString(value.role, `${path}.role`, details);
+  const expectedWasmHash = readOptionalWasmHash(value.expected_wasm_hash, `${path}.expected_wasm_hash`, details);
 
   if (!name || !address || !network) return null;
   return {
@@ -269,7 +386,17 @@ function readManifestContract(
     active_users: activeUsers,
     criticality,
     role,
+    expected_wasm_hash: expectedWasmHash,
   };
+}
+
+function readOptionalWasmHash(value: unknown, path: string, details: string[]): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !/^[0-9a-fA-F]{64}$/.test(value.trim())) {
+    details.push(`${path} must be a 64-character hex-encoded SHA-256 hash.`);
+    return undefined;
+  }
+  return value.trim().toLowerCase();
 }
 
 function readRequiredString(value: unknown, path: string, details: string[]): string | undefined {

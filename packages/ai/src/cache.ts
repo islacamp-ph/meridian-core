@@ -17,6 +17,9 @@ export function buildBriefCacheKey(input: BriefInput): string {
   const payload = {
     verdict: input.verdict,
     confidence: input.confidence,
+    decision: input.decision,
+    top_risks: input.top_risks,
+    policy: input.policy,
     trace: {
       success: input.trace.success,
       failure_point: input.trace.failure_point,
@@ -30,6 +33,7 @@ export function buildBriefCacheKey(input: BriefInput): string {
       contracts_mapped: input.field.contracts_mapped,
       dependency_graph: input.field.dependency_graph,
       ttl_warnings: input.field.ttl_warnings,
+      upgrade_warnings: input.field.upgrade_warnings,
       manifest_coverage: input.field.manifest_coverage,
     },
     gravity: {

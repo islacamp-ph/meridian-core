@@ -16,10 +16,17 @@ inputs:
   ecosystem-manifest:
     description: Path to an ecosystem manifest JSON file
     required: false
+  policy:
+    description: Path to a policy rules JSON file (pre-merge policy gates)
+    required: false
   fail-on:
     description: Minimum verdict severity that fails the step (ABORT or WARN)
     required: false
     default: ABORT
+  fail-on-decision:
+    description: Fail when decision.action is one of these (comma-separated: hold,rewrite). Empty disables.
+    required: false
+    default: rewrite
   api-url:
     description: MERIDIAN API base URL (uses CLI locally when unset)
     required: false
@@ -35,6 +42,9 @@ outputs:
   verdict:
     description: Analysis verdict (CLEAR, WARN, or ABORT)
     value: ${{ steps.analyze.outputs.verdict }}
+  decision:
+    description: Pre-submit decision (submit, hold, or rewrite)
+    value: ${{ steps.analyze.outputs.decision }}
   confidence:
     description: Analysis confidence score (0-1)
     value: ${{ steps.analyze.outputs.confidence }}
@@ -62,7 +72,9 @@ runs:
         TX_FILE: ${{ inputs.tx-file }}
         NETWORK: ${{ inputs.network }}
         ECOSYSTEM: ${{ inputs.ecosystem-manifest }}
+        POLICY: ${{ inputs.policy }}
         FAIL_ON: ${{ inputs.fail-on }}
+        FAIL_ON_DECISION: ${{ inputs.fail-on-decision }}
         API_URL: ${{ inputs.api-url }}
         API_KEY: ${{ inputs.api-key }}
         NO_BRIEF: ${{ inputs.no-brief }}
@@ -84,23 +96,39 @@ runs:
           ECOSYSTEM_FLAG="--ecosystem ${ECOSYSTEM}"
         fi
 
+        POLICY_FLAG=""
+        if [ -n "${POLICY:-}" ]; then
+          POLICY_FLAG="--policy ${POLICY}"
+        fi
+
         NO_BRIEF_FLAG=""
         if [ "${NO_BRIEF:-true}" = "true" ]; then
           NO_BRIEF_FLAG="--no-brief"
         fi
 
         if [ -n "${API_URL:-}" ]; then
+          if [ -n "${TX_FILE:-}" ]; then
+            TX_CONTENT=$(cat "${TX_FILE}")
+          else
+            TX_CONTENT="${TX}"
+          fi
+
           BODY=$(jq -n \
-            --arg tx "${TX:-}" \
+            --arg tx "${TX_CONTENT}" \
             --arg network "${NETWORK}" \
             '{tx: $tx, network: $network}')
 
-          if [ -n "${TX_FILE:-}" ]; then
-            TX_CONTENT=$(cat "${TX_FILE}")
-            BODY=$(jq -n \
-              --arg tx "${TX_CONTENT}" \
-              --arg network "${NETWORK}" \
-              '{tx: $tx, network: $network}')
+          if [ -n "${ECOSYSTEM:-}" ]; then
+            BODY=$(echo "${BODY}" | jq --slurpfile eco "${ECOSYSTEM}" '. + {ecosystem: $eco[0]}')
+          fi
+
+          if [ -n "${POLICY:-}" ]; then
+            POLICY_JSON=$(cat "${POLICY}")
+            if echo "${POLICY_JSON}" | jq -e 'type == "array"' >/dev/null 2>&1; then
+              BODY=$(echo "${BODY}" | jq --argjson rules "${POLICY_JSON}" '. + {options: ((.options // {}) + {policy_rules: $rules})}')
+            else
+              BODY=$(echo "${BODY}" | jq --slurpfile pol "${POLICY}" '. + {options: ((.options // {}) + {policy_rules: ($pol[0].rules // $pol[0])})}')
+            fi
           fi
 
           AUTH_HEADER=()
@@ -113,14 +141,18 @@ runs:
             "${AUTH_HEADER[@]}" \
             -d "${BODY}")
         else
-          RESULT=$(meridian analyze ${TX_ARG} --network "${NETWORK}" ${ECOSYSTEM_FLAG} ${NO_BRIEF_FLAG} --json)
+          RESULT=$(meridian analyze ${TX_ARG} --network "${NETWORK}" ${ECOSYSTEM_FLAG} ${POLICY_FLAG} ${NO_BRIEF_FLAG} --json)
         fi
 
         VERDICT=$(echo "${RESULT}" | jq -r '.verdict')
+        DECISION=$(echo "${RESULT}" | jq -r '.decision.action // empty')
         CONFIDENCE=$(echo "${RESULT}" | jq -r '.confidence')
         BRIEF=$(echo "${RESULT}" | jq -r '.brief // empty')
+        POLICY_EFFECT=$(echo "${RESULT}" | jq -r '.policy.effect // empty')
+        POLICY_PASSED=$(echo "${RESULT}" | jq -r '.policy.passed // empty')
 
         echo "verdict=${VERDICT}" >> "${GITHUB_OUTPUT}"
+        echo "decision=${DECISION}" >> "${GITHUB_OUTPUT}"
         echo "confidence=${CONFIDENCE}" >> "${GITHUB_OUTPUT}"
         {
           echo "brief<<EOF"
@@ -133,11 +165,26 @@ runs:
         echo "| Field | Value |" >> "${GITHUB_STEP_SUMMARY}"
         echo "|---|---|" >> "${GITHUB_STEP_SUMMARY}"
         echo "| Verdict | **${VERDICT}** |" >> "${GITHUB_STEP_SUMMARY}"
+        echo "| Decision | **${DECISION}** |" >> "${GITHUB_STEP_SUMMARY}"
         echo "| Confidence | ${CONFIDENCE} |" >> "${GITHUB_STEP_SUMMARY}"
+        if [ -n "${POLICY_EFFECT}" ]; then
+          echo "| Policy | ${POLICY_PASSED} / ${POLICY_EFFECT} |" >> "${GITHUB_STEP_SUMMARY}"
+        fi
+        TOP_RISKS=$(echo "${RESULT}" | jq -r '.top_risks[:3][]? | "- [\(.severity)] \(.title)"' 2>/dev/null || true)
+        if [ -n "${TOP_RISKS}" ]; then
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "### Top risks" >> "${GITHUB_STEP_SUMMARY}"
+          echo "${TOP_RISKS}" >> "${GITHUB_STEP_SUMMARY}"
+        fi
         if [ -n "${BRIEF}" ]; then
           echo "" >> "${GITHUB_STEP_SUMMARY}"
           echo "### Brief" >> "${GITHUB_STEP_SUMMARY}"
           echo "${BRIEF}" >> "${GITHUB_STEP_SUMMARY}"
+        fi
+
+        if [ "${POLICY_PASSED}" = "false" ] && [ "${POLICY_EFFECT}" = "ABORT" ]; then
+          echo "MERIDIAN policy gate failed (ABORT) — failing step" >&2
+          exit 1
         fi
 
         case "${FAIL_ON}" in
@@ -158,6 +205,17 @@ runs:
             exit 1
             ;;
         esac
+
+        if [ -n "${FAIL_ON_DECISION:-}" ] && [ -n "${DECISION}" ]; then
+          IFS=',' read -r -a DECISION_GATES <<< "${FAIL_ON_DECISION}"
+          for gate in "${DECISION_GATES[@]}"; do
+            gate_trimmed=$(echo "${gate}" | xargs)
+            if [ -n "${gate_trimmed}" ] && [ "${DECISION}" = "${gate_trimmed}" ]; then
+              echo "MERIDIAN decision is ${DECISION} (fail-on-decision=${FAIL_ON_DECISION}) — failing step" >&2
+              exit 1
+            fi
+          done
+        fi
 
 branding:
   icon: shield

@@ -1,4 +1,6 @@
 import type {
+  AnalyzeDiffRequest,
+  AnalyzeDiffResponse,
   AnalyzeRequest,
   AnalyzeResponse,
   BatchAnalyzeItemRequest,
@@ -71,6 +73,10 @@ export class MeridianClient {
 
   async analyzeBatch(request: BatchAnalyzeRequest): Promise<BatchAnalyzeResponse> {
     return this.post('/v1/analyze/batch', request);
+  }
+
+  async analyzeDiff(request: AnalyzeDiffRequest): Promise<AnalyzeDiffResponse> {
+    return this.post('/v1/analyze/diff', request);
   }
 
   async trace(request: TraceRequest): Promise<TraceResult> {
@@ -166,4 +172,4 @@ export class MeridianClientError extends Error {
   }
 }
 
-export type { AnalyzeRequest, AnalyzeResponse, StructuredAnalyzeResponse };
+export type { AnalyzeDiffRequest, AnalyzeDiffResponse, AnalyzeRequest, AnalyzeResponse, StructuredAnalyzeResponse };

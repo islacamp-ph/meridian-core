@@ -35,6 +35,32 @@ describe('MeridianClient', () => {
     );
   });
 
+  it('calls /v1/analyze/diff with the request body', async () => {
+    const fetchFn = mockFetch({
+      status: 200,
+      body: { diff: { decision_changed: true } },
+    });
+    const client = new MeridianClient({
+      baseUrl: 'https://api.example.com',
+      fetch: fetchFn,
+    });
+
+    const result = await client.analyzeDiff({
+      tx_a: 'AAAA',
+      tx_b: 'BBBB',
+      network: 'testnet',
+    });
+
+    expect(result.diff.decision_changed).toBe(true);
+    expect(fetchFn).toHaveBeenCalledWith(
+      'https://api.example.com/v1/analyze/diff',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ tx_a: 'AAAA', tx_b: 'BBBB', network: 'testnet' }),
+      }),
+    );
+  });
+
   it('sends Authorization header when apiKey is set', async () => {
     const fetchFn = mockFetch({ status: 200, body: { status: 'ok' } });
     const client = new MeridianClient({
