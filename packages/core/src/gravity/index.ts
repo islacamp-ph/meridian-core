@@ -49,6 +49,16 @@ export function scoreGravity(
   const footprintContracts = new Set(trace.simulation_context.footprintContracts);
   const failedContract = trace.failure_point?.contract_id;
 
+  const ttlCritical = new Set(
+    field.ttl_warnings.filter((w) => w.severity === 'CRITICAL').map((w) => w.contract_id),
+  );
+  const ttlWarning = new Set(
+    field.ttl_warnings.filter((w) => w.severity === 'WARNING').map((w) => w.contract_id),
+  );
+  const upgradeRisk = new Set(field.upgrade_warnings.map((w) => w.contract_id));
+  const knownContracts = new Set(manifest?.contracts.map((c) => c.address) ?? []);
+  const slippageSensitive = detectSlippageSensitive(trace);
+
   const affectedContracts: ContractImpact[] = field.dependency_graph.map((node) => {
     const manifestEntry = manifestLookup.get(node.address);
     const breakdown = scoreContract({
@@ -63,6 +73,11 @@ export function scoreGravity(
       criticality: manifestEntry?.criticality,
       activeUsers: manifestEntry?.active_users,
       role: manifestEntry?.role,
+      unknownDependency: Boolean(manifest) && !knownContracts.has(node.address),
+      upgradeRisk: upgradeRisk.has(node.address) || Boolean(node.upgrade_risk),
+      ttlCritical: ttlCritical.has(node.address),
+      ttlWarning: ttlWarning.has(node.address),
+      slippageSensitive: slippageSensitive.has(node.address),
     });
 
     return {
@@ -135,6 +150,11 @@ function scoreContract(input: {
   criticality?: 'HIGH' | 'MEDIUM' | 'LOW';
   activeUsers?: number;
   role?: string;
+  unknownDependency: boolean;
+  upgradeRisk: boolean;
+  ttlCritical: boolean;
+  ttlWarning: boolean;
+  slippageSensitive: boolean;
 }): GravityContractScoreBreakdown {
   const factors: GravityFactor[] = [];
 
@@ -162,10 +182,20 @@ function scoreContract(input: {
     factors,
     'write_access',
     'Write access',
-    input.hasWriteAccess ? 20 : 0,
+    input.hasWriteAccess ? 18 : 0,
     input.hasWriteAccess
       ? 'Contract has write-capable execution activity.'
       : 'No write-capable execution activity detected.',
+  );
+
+  pushFactor(
+    factors,
+    'irreversible_write',
+    'Irreversible state write',
+    input.hasWriteAccess ? 12 : 0,
+    input.hasWriteAccess
+      ? 'Write surfaces become irreversible once the transaction is confirmed.'
+      : 'No irreversible write surface detected.',
   );
 
   pushFactor(
@@ -190,6 +220,16 @@ function scoreContract(input: {
 
   pushFactor(
     factors,
+    'privilege_level',
+    'Privilege / admin path',
+    privilegeWeight(input.role, input.authCritical),
+    privilegeWeight(input.role, input.authCritical) > 0
+      ? 'Elevated privilege or admin-capable role is implicated.'
+      : 'No elevated privilege evidence.',
+  );
+
+  pushFactor(
+    factors,
     'manifest_criticality',
     'Manifest criticality',
     criticalityWeight(input.criticality),
@@ -206,6 +246,16 @@ function scoreContract(input: {
     input.activeUsers && input.activeUsers > 0
       ? `Manifest reports ${input.activeUsers} active users.`
       : 'No active user exposure provided.',
+  );
+
+  pushFactor(
+    factors,
+    'fund_exposure',
+    'Fund exposure',
+    fundExposureWeight(input.role, input.activeUsers, input.hasWriteAccess),
+    fundExposureWeight(input.role, input.activeUsers, input.hasWriteAccess) > 0
+      ? 'Contract role or user base implies material fund exposure.'
+      : 'No material fund exposure signal.',
   );
 
   pushFactor(
@@ -236,8 +286,83 @@ function scoreContract(input: {
     input.role ? `Manifest role is ${input.role}.` : 'Manifest role not provided.',
   );
 
+  pushFactor(
+    factors,
+    'unknown_dependency',
+    'Unknown dependency',
+    input.unknownDependency ? 14 : 0,
+    input.unknownDependency
+      ? 'Contract is not listed in the ecosystem manifest.'
+      : 'Contract is known to the ecosystem manifest.',
+  );
+
+  pushFactor(
+    factors,
+    'upgradeable_dependency',
+    'Upgradeable / WASM drift',
+    input.upgradeRisk ? 16 : 0,
+    input.upgradeRisk
+      ? 'On-chain WASM differs from expected hash or upgrade risk flagged.'
+      : 'No WASM upgrade drift detected.',
+  );
+
+  pushFactor(
+    factors,
+    'ttl_archival',
+    'TTL / archival risk',
+    input.ttlCritical ? 25 : input.ttlWarning ? 10 : 0,
+    input.ttlCritical
+      ? 'Ledger entry is archived or TTL expired.'
+      : input.ttlWarning
+        ? 'Ledger entry is nearing archival expiry.'
+        : 'No TTL archival risk detected.',
+  );
+
+  pushFactor(
+    factors,
+    'slippage_sensitivity',
+    'Slippage / price sensitivity',
+    input.slippageSensitive ? 12 : 0,
+    input.slippageSensitive
+      ? 'Execution path includes swap/transfer semantics sensitive to price movement.'
+      : 'No slippage-sensitive path detected.',
+  );
+
   const total = Math.round(factors.reduce((sum, factor) => sum + factor.weight, 0) * 100) / 100;
   return { total, factors };
+}
+
+function privilegeWeight(role?: string, authCritical?: boolean): number {
+  const normalized = role?.toLowerCase();
+  if (normalized && ['admin', 'governance', 'owner', 'upgrader'].includes(normalized)) return 18;
+  if (authCritical && normalized && ['vault', 'bridge', 'core'].includes(normalized)) return 12;
+  if (authCritical) return 6;
+  return 0;
+}
+
+function fundExposureWeight(role?: string, activeUsers?: number, hasWriteAccess?: boolean): number {
+  const normalized = role?.toLowerCase() ?? '';
+  let weight = 0;
+  if (['vault', 'bridge', 'pool', 'token', 'router'].includes(normalized)) weight += 12;
+  if (hasWriteAccess && activeUsers && activeUsers >= 1_000) weight += 8;
+  else if (hasWriteAccess && activeUsers && activeUsers > 0) weight += 4;
+  return Math.min(20, weight);
+}
+
+function detectSlippageSensitive(trace: TraceResult): Set<string> {
+  const sensitive = new Set<string>();
+  for (const step of trace.execution_path) {
+    const fn = step.function_name?.toLowerCase() ?? '';
+    const desc = step.description.toLowerCase();
+    if (
+      step.contract_id
+      && (fn.includes('swap') || fn.includes('exchange') || fn.includes('liquidate')
+        || desc.includes('path payment') || desc.includes('swap'))
+    ) {
+      sensitive.add(step.contract_id);
+    }
+  }
+  return sensitive;
 }
 
 function pushFactor(

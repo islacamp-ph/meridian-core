@@ -1,8 +1,11 @@
 import { createRequire } from 'node:module';
+import { buildDecision, collectTopRisks } from './decision.js';
 import { buildExplainabilityReport } from './explainability.js';
 import { buildFieldGraph } from './field/index.js';
+import { buildExecutionGraph, buildStateChangeSummary } from './graph.js';
 import { scoreGravity } from './gravity/index.js';
 import { logger } from './logger.js';
+import { evaluatePolicy } from './policy.js';
 import { trace } from './trace/index.js';
 import type {
   AnalyzeRequest,
@@ -10,8 +13,10 @@ import type {
   ConfidenceBucket,
   FixStep,
   MeridianError,
+  RiskItem,
   SimulationContext,
   TTLWarning,
+  UpgradeWarning,
   Verdict,
 } from './types.js';
 
@@ -86,122 +91,195 @@ export function computeConfidence(
 }
 
 /**
- * Generate fix sequence for WARN or ABORT verdicts.
- *
- * @param input - Verdict and analysis context for fix step generation
- * @returns Fix steps or undefined
+ * Generate targeted remediations for WARN / ABORT / hold / rewrite decisions.
  */
 export function generateFixSequence(input: {
   verdict: Verdict;
+  decisionAction?: 'submit' | 'hold' | 'rewrite';
   traceSuccess: boolean;
   warnings?: string[];
   failureRootCause?: string;
   failureErrorCode?: string;
+  failureContractId?: string;
   ttlWarnings?: TTLWarning[];
+  upgradeWarnings?: UpgradeWarning[];
   blastRadius?: number;
   manifestCoverage?: number;
+  topRisks?: RiskItem[];
+  unknownContracts?: string[];
 }): FixStep[] | undefined {
-  if (input.verdict !== 'WARN' && input.verdict !== 'ABORT') {
+  if (
+    input.verdict !== 'WARN'
+    && input.verdict !== 'ABORT'
+    && input.decisionAction !== 'hold'
+    && input.decisionAction !== 'rewrite'
+  ) {
     return undefined;
   }
 
   const steps: FixStep[] = [];
   let order = 1;
+  const seen = new Set<string>();
 
-  if (input.verdict === 'ABORT') {
-    if (input.failureErrorCode === 'ENTRY_ARCHIVED') {
-      steps.push({
-        order: order++,
-        operation: 'restore_archived_entry',
-        description: 'Restore archived ledger entries or extend TTL before resubmitting',
-        estimated_cost_stroops: 500,
-        estimated_time_minutes: 15,
-      });
-    } else if (input.failureErrorCode === 'AUTH_REQUIRED') {
-      steps.push({
-        order: order++,
-        operation: 'fix_auth',
-        description: 'Ensure all require_auth credentials are signed and valid',
-        estimated_cost_stroops: 100,
-        estimated_time_minutes: 10,
-      });
-    } else if (input.failureErrorCode === 'INSUFFICIENT_BALANCE') {
-      steps.push({
-        order: order++,
-        operation: 'fund_account',
-        description: 'Add sufficient balance to cover fees and operation costs',
-        estimated_cost_stroops: 0,
-        estimated_time_minutes: 5,
-      });
-    } else {
-      steps.push({
-        order: order++,
-        operation: 'diagnose',
-        description: input.failureRootCause ?? 'Review simulation failure point',
-        estimated_cost_stroops: 0,
-        estimated_time_minutes: 5,
-      });
-    }
+  const push = (step: Omit<FixStep, 'order'>) => {
+    const key = `${step.operation}:${step.contract_id ?? ''}:${step.targets?.join(',') ?? ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    steps.push({ ...step, order: order++ });
+  };
+
+  if (input.failureErrorCode === 'ENTRY_ARCHIVED' || input.ttlWarnings?.some((w) => w.severity === 'CRITICAL')) {
+    const contractId = input.failureContractId
+      ?? input.ttlWarnings?.find((w) => w.severity === 'CRITICAL')?.contract_id;
+    push({
+      operation: 'restore_archived_entry',
+      description: 'Restore archived ledger entries or extend TTL before resubmitting',
+      estimated_cost_stroops: 500,
+      estimated_time_minutes: 15,
+      targets: ['ttl_archival', 'ENTRY_ARCHIVED'],
+      contract_id: contractId,
+      safer_alternative: 'Split restore/TTL-extend into a prior transaction, then resubmit the original intent.',
+    });
   }
 
-  if (input.verdict === 'WARN') {
-    if (input.warnings?.some((warning) => warning.includes('stale'))) {
-      steps.push({
-        order: order++,
-        operation: 'refresh_ledger',
-        description: 'Re-simulate against the latest ledger to refresh stale simulation data',
-        estimated_cost_stroops: 0,
-        estimated_time_minutes: 2,
-      });
-    }
+  if (input.failureErrorCode === 'AUTH_REQUIRED') {
+    push({
+      operation: 'fix_auth',
+      description: 'Rebuild auth entries: ensure every require_auth credential is signed for this invocation',
+      estimated_cost_stroops: 100,
+      estimated_time_minutes: 10,
+      targets: ['auth_critical_path', 'AUTH_REQUIRED'],
+      contract_id: input.failureContractId,
+      safer_alternative: 'Re-simulate with record auth mode, assemble auth, then enforce-mode simulate before submit.',
+    });
+  } else if (input.failureErrorCode === 'INSUFFICIENT_BALANCE') {
+    push({
+      operation: 'fund_account',
+      description: 'Add sufficient balance to cover fees and operation costs',
+      estimated_cost_stroops: 0,
+      estimated_time_minutes: 5,
+      targets: ['INSUFFICIENT_BALANCE', 'fund_exposure'],
+    });
+  } else if (!input.traceSuccess && input.failureErrorCode) {
+    push({
+      operation: 'diagnose',
+      description: input.failureRootCause ?? 'Review simulation failure point and rebuild the offending operation',
+      estimated_cost_stroops: 0,
+      estimated_time_minutes: 5,
+      targets: [input.failureErrorCode, 'direct_failure_point'],
+      contract_id: input.failureContractId,
+    });
+  }
 
-    if (input.manifestCoverage !== undefined && input.manifestCoverage < 0.5) {
-      steps.push({
-        order: order++,
-        operation: 'add_manifest',
-        description: 'Provide an ecosystem manifest to improve dependency mapping confidence',
+  if (input.ttlWarnings?.some((warning) => warning.severity === 'WARNING')) {
+    const contractId = input.ttlWarnings.find((w) => w.severity === 'WARNING')?.contract_id;
+    push({
+      operation: 'extend_ttl',
+      description: 'Extend TTL on ledger entries nearing archival expiry before submit',
+      estimated_cost_stroops: 200,
+      estimated_time_minutes: 10,
+      targets: ['ttl_archival'],
+      contract_id: contractId,
+      safer_alternative: 'Submit a dedicated TTL-extend transaction first, then the original write path.',
+    });
+  }
+
+  for (const upgrade of input.upgradeWarnings ?? []) {
+    push({
+      operation: 'pin_or_review_upgrade',
+      description: `Review WASM drift on ${upgrade.name ?? upgrade.contract_id}; pin expected hash or pause until verified`,
+      estimated_cost_stroops: 0,
+      estimated_time_minutes: 20,
+      targets: ['upgradeable_dependency'],
+      contract_id: upgrade.contract_id,
+      safer_alternative: 'Route via an immutable / audited dependency or wait until on-chain WASM matches the manifest.',
+    });
+  }
+
+  for (const address of input.unknownContracts ?? []) {
+    push({
+      operation: 'allowlist_or_remove',
+      description: `Remove unknown contract ${address} from the tx path or add it to the ecosystem allowlist/manifest`,
+      estimated_cost_stroops: 0,
+      estimated_time_minutes: 15,
+      targets: ['unknown_dependency'],
+      contract_id: address,
+      safer_alternative: 'Rewrite the transaction to call only allowlisted contracts.',
+    });
+  }
+
+  if (input.warnings?.some((warning) => warning.includes('stale'))) {
+    push({
+      operation: 'refresh_ledger',
+      description: 'Re-simulate against the latest ledger to refresh stale simulation data',
+      estimated_cost_stroops: 0,
+      estimated_time_minutes: 2,
+      targets: ['staleness'],
+    });
+  }
+
+  if (input.manifestCoverage !== undefined && input.manifestCoverage < 0.5) {
+    push({
+      operation: 'add_manifest',
+      description: 'Provide an ecosystem manifest so unknown deps and criticality are classified',
+      estimated_cost_stroops: 0,
+      estimated_time_minutes: 10,
+      targets: ['unknown_dependency', 'manifest_coverage'],
+    });
+  }
+
+  if (input.blastRadius !== undefined && input.blastRadius >= 50) {
+    push({
+      operation: 'reduce_scope',
+      description: 'Reduce transaction scope: fewer writes, fewer downstream contracts, lower privilege',
+      estimated_cost_stroops: 0,
+      estimated_time_minutes: 15,
+      targets: ['blast_radius', 'fund_exposure'],
+      safer_alternative: 'Split into smaller transactions so each has a lower blast radius and separate approval.',
+    });
+  }
+
+  for (const risk of (input.topRisks ?? []).slice(0, 3)) {
+    if (risk.factor_key === 'slippage_sensitivity') {
+      push({
+        operation: 'tighten_slippage',
+        description: 'Add / tighten amount bounds or deadline for price-sensitive paths',
         estimated_cost_stroops: 0,
         estimated_time_minutes: 10,
+        targets: ['slippage_sensitivity'],
+        contract_id: risk.contract_id,
+        safer_alternative: 'Use exact-output limits or a private RFQ path instead of open slippage.',
       });
     }
-
-    if (input.blastRadius !== undefined && input.blastRadius >= 50) {
-      steps.push({
-        order: order++,
-        operation: 'review_scope',
-        description: 'Review critical contracts and reduce transaction blast radius',
+    if (risk.factor_key === 'privilege_level' || risk.factor_key === 'auth_critical_path') {
+      push({
+        operation: 'reduce_privilege',
+        description: 'Avoid admin/upgrade auth in this transaction; use least-privilege credentials',
         estimated_cost_stroops: 0,
         estimated_time_minutes: 15,
-      });
-    }
-
-    if (input.ttlWarnings?.some((warning) => warning.severity === 'WARNING')) {
-      steps.push({
-        order: order++,
-        operation: 'extend_ttl',
-        description: 'Extend TTL on ledger entries nearing archival expiry',
-        estimated_cost_stroops: 200,
-        estimated_time_minutes: 10,
+        targets: ['privilege_level', 'auth_critical_path'],
+        contract_id: risk.contract_id,
+        safer_alternative: 'Move admin operations to a separate, human-gated approval flow.',
       });
     }
   }
 
   if (input.verdict === 'ABORT' && input.failureErrorCode !== 'AUTH_REQUIRED') {
-    steps.push({
-      order: order++,
-      operation: 'fix_auth',
+    push({
+      operation: 'verify_auth',
       description: 'Verify authorization credentials if auth may be contributing to failure',
       estimated_cost_stroops: 100,
       estimated_time_minutes: 10,
+      targets: ['auth_critical_path'],
     });
   }
 
-  steps.push({
-    order: order++,
+  push({
     operation: 'resimulate',
-    description: 'Re-run MERIDIAN analysis after applying fixes',
+    description: 'Re-run MERIDIAN analysis after applying remediations',
     estimated_cost_stroops: 0,
     estimated_time_minutes: 2,
+    targets: ['resimulate'],
   });
 
   return steps;
@@ -290,15 +368,69 @@ export async function analyze(
     warnings.push(`${fieldResult.upgrade_warnings.length} WASM upgrade risk(s) detected against manifest`);
   }
 
+  const policy = request.options?.policy_rules?.length
+    ? evaluatePolicy({
+        rules: request.options.policy_rules,
+        trace: traceResult,
+        field: fieldResult,
+        gravity: gravityResult,
+        confidence,
+        manifest: request.ecosystem,
+      })
+    : undefined;
+
+  // Policy can escalate WARN/ABORT beyond simulation-only verdict
+  let effectiveVerdict = verdict;
+  if (policy?.effect === 'ABORT') effectiveVerdict = 'ABORT';
+  else if (policy?.effect === 'WARN' && verdict === 'CLEAR') effectiveVerdict = 'WARN';
+
+  if (policy && !policy.passed) {
+    warnings.push(`Policy ${policy.effect}: ${policy.violations.length} rule violation(s)`);
+  }
+
+  const decision = buildDecision({
+    verdict: effectiveVerdict,
+    confidence,
+    trace: traceResult,
+    field: fieldResult,
+    gravity: gravityResult,
+    manifest: request.ecosystem,
+    policyEffect: policy?.effect,
+  });
+
+  const topRisks = collectTopRisks({
+    verdict: effectiveVerdict,
+    confidence,
+    trace: traceResult,
+    field: fieldResult,
+    gravity: gravityResult,
+    manifest: request.ecosystem,
+  }).slice(0, 3);
+
+  const executionGraph = buildExecutionGraph(traceResult, fieldResult, request.ecosystem);
+  const stateChanges = buildStateChangeSummary(traceResult, fieldResult);
+
+  const knownContracts = new Set(request.ecosystem?.contracts.map((c) => c.address) ?? []);
+  const unknownContracts = request.ecosystem
+    ? fieldResult.dependency_graph
+        .map((node) => node.address)
+        .filter((address) => !knownContracts.has(address))
+    : [];
+
   const fixSequence = generateFixSequence({
-    verdict,
+    verdict: effectiveVerdict,
+    decisionAction: decision.action,
     traceSuccess: traceResult.success,
     warnings,
     failureRootCause: traceResult.failure_point?.root_cause,
     failureErrorCode: traceResult.failure_point?.error_code,
+    failureContractId: traceResult.failure_point?.contract_id,
     ttlWarnings: fieldResult.ttl_warnings,
+    upgradeWarnings: fieldResult.upgrade_warnings,
     blastRadius: gravityResult.blast_radius,
     manifestCoverage: fieldResult.manifest_coverage,
+    topRisks,
+    unknownContracts,
   });
 
   const explainability = buildExplainabilityReport(
@@ -313,14 +445,19 @@ export async function analyze(
   return {
     product: 'MERIDIAN',
     version: MERIDIAN_VERSION,
-    verdict,
+    verdict: effectiveVerdict,
     confidence,
+    decision,
+    execution_graph: executionGraph,
+    state_changes: stateChanges,
+    top_risks: topRisks,
     trace: traceResult,
     field: fieldResult,
     gravity: gravityResult,
     explainability,
     fix_sequence: fixSequence,
     warnings: warnings.length > 0 ? warnings : undefined,
+    policy,
     meta: {
       analyzed_at: new Date().toISOString(),
       ledger_sequence: context.ledgerSequence,
