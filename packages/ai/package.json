@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "@meridian/core": "0.1.1"
+    "@meridian/core": "0.2.0"
   },
   "devDependencies": {
     "vitest": "^4.1.9"
