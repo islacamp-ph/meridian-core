@@ -1,6 +1,6 @@
 {
   "name": "meridian-core",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "MERIDIAN command-line interface — pre-execution intelligence from your terminal",
   "type": "module",
   "main": "./dist/index.js",
@@ -26,7 +26,7 @@
   },
   "devDependencies": {
     "@meridian/ai": "0.1.0",
-    "@meridian/core": "0.1.1",
+    "@meridian/core": "0.2.0",
     "esbuild": "^0.28.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
