@@ -224,6 +224,35 @@ function readManifestContract(
   );
   const role = readOptionalString(value.role, `${path}.role`, errors);
   const expectedWasmHash = readOptionalWasmHash(value.expected_wasm_hash, `${path}.expected_wasm_hash`, errors);
+  const auditStatus = readOptionalEnum(
+    value.audit_status,
+    `${path}.audit_status`,
+    ['audited', 'unaudited', 'unknown'] as const,
+    errors,
+  );
+  const deployedAt = readOptionalString(value.deployed_at, `${path}.deployed_at`, errors);
+  const deployedLedger = readOptionalNumber(value.deployed_ledger, `${path}.deployed_ledger`, errors);
+  let upgradeable: boolean | undefined;
+  if (value.upgradeable !== undefined) {
+    if (typeof value.upgradeable !== 'boolean') {
+      errors.push(`${path}.upgradeable must be a boolean.`);
+    } else {
+      upgradeable = value.upgradeable;
+    }
+  }
+  let reputationScore: number | undefined;
+  if (value.reputation_score !== undefined) {
+    if (
+      typeof value.reputation_score !== 'number'
+      || Number.isNaN(value.reputation_score)
+      || value.reputation_score < 0
+      || value.reputation_score > 100
+    ) {
+      errors.push(`${path}.reputation_score must be a number between 0 and 100.`);
+    } else {
+      reputationScore = value.reputation_score;
+    }
+  }
 
   if (!name || !address || !network) return null;
   return {
@@ -235,6 +264,11 @@ function readManifestContract(
     criticality,
     role,
     expected_wasm_hash: expectedWasmHash,
+    audit_status: auditStatus,
+    deployed_at: deployedAt,
+    deployed_ledger: deployedLedger,
+    upgradeable,
+    reputation_score: reputationScore,
   };
 }
 

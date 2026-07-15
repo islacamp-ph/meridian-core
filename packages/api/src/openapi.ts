@@ -47,10 +47,17 @@ export const openApiDocument = {
               'ttl_critical',
               'upgrade_risk',
               'min_confidence',
+              'max_slippage',
+              'max_amount',
+              'require_approval',
+              'untrusted_counterparty',
             ],
           },
           effect: { type: 'string', enum: ['ABORT', 'WARN', 'ALLOW'] },
-          threshold: { type: 'number', description: 'For max_blast_radius' },
+          threshold: {
+            type: 'number',
+            description: 'For max_blast_radius / require_approval / max_amount / untrusted reputation floor',
+          },
           allowlist: {
             type: 'array',
             items: { type: 'string' },
@@ -75,6 +82,18 @@ export const openApiDocument = {
             items: { $ref: '#/components/schemas/PolicyRule' },
             description: 'Deterministic pre-merge policy gates evaluated after analysis',
           },
+          expected_path: {
+            type: 'array',
+            description: 'Expected invoke path for path-expectation checks',
+            items: {
+              type: 'object',
+              required: ['contract_id'],
+              properties: {
+                contract_id: { type: 'string' },
+                function_name: { type: 'string' },
+              },
+            },
+          },
         },
       },
       ManifestContract: {
@@ -92,6 +111,11 @@ export const openApiDocument = {
             type: 'string',
             description: '64-char hex SHA-256 of expected Wasm; enables upgrade/admin drift detection',
           },
+          audit_status: { type: 'string', enum: ['audited', 'unaudited', 'unknown'] },
+          deployed_at: { type: 'string', description: 'ISO-8601 deployment date' },
+          deployed_ledger: { type: 'number' },
+          upgradeable: { type: 'boolean' },
+          reputation_score: { type: 'number', minimum: 0, maximum: 100 },
         },
       },
       EcosystemManifest: {

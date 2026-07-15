@@ -34,6 +34,10 @@ const POLICY_RULE_TYPES = [
   'ttl_critical',
   'upgrade_risk',
   'min_confidence',
+  'max_slippage',
+  'max_amount',
+  'require_approval',
+  'untrusted_counterparty',
 ] as const;
 
 const POLICY_EFFECTS = ['ABORT', 'WARN', 'ALLOW'] as const;
@@ -259,7 +263,38 @@ function readAnalyzeOptions(
     if (rules) result.policy_rules = rules;
   }
 
+  if (value.expected_path !== undefined) {
+    const expectedPath = readExpectedPath(value.expected_path, `${path}.expected_path`, details);
+    if (expectedPath) result.expected_path = expectedPath;
+  }
+
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function readExpectedPath(
+  value: unknown,
+  path: string,
+  details: string[],
+): NonNullable<AnalyzeRequest['options']>['expected_path'] | undefined {
+  if (!Array.isArray(value)) {
+    details.push(`${path} must be an array.`);
+    return undefined;
+  }
+  const steps = value.map((step, index) => {
+    if (!isRecord(step)) {
+      details.push(`${path}[${index}] must be an object.`);
+      return null;
+    }
+    const contractId = readRequiredString(step.contract_id, `${path}[${index}].contract_id`, details);
+    const functionName = readOptionalString(step.function_name, `${path}[${index}].function_name`, details);
+    if (!contractId) return null;
+    return {
+      contract_id: contractId,
+      ...(functionName !== undefined ? { function_name: functionName } : {}),
+    };
+  }).filter((step): step is { contract_id: string; function_name?: string } => step !== null);
+
+  return steps.length > 0 ? steps : undefined;
 }
 
 function readPolicyRules(
@@ -376,6 +411,16 @@ function readManifestContract(
   const criticality = readOptionalEnum(value.criticality, `${path}.criticality`, ['HIGH', 'MEDIUM', 'LOW'], details);
   const role = readOptionalString(value.role, `${path}.role`, details);
   const expectedWasmHash = readOptionalWasmHash(value.expected_wasm_hash, `${path}.expected_wasm_hash`, details);
+  const auditStatus = readOptionalEnum(
+    value.audit_status,
+    `${path}.audit_status`,
+    ['audited', 'unaudited', 'unknown'] as const,
+    details,
+  );
+  const deployedAt = readOptionalString(value.deployed_at, `${path}.deployed_at`, details);
+  const deployedLedger = readOptionalNumber(value.deployed_ledger, `${path}.deployed_ledger`, details);
+  const upgradeable = readOptionalBoolean(value.upgradeable, `${path}.upgradeable`, details);
+  const reputationScore = readOptionalReputation(value.reputation_score, `${path}.reputation_score`, details);
 
   if (!name || !address || !network) return null;
   return {
@@ -387,7 +432,30 @@ function readManifestContract(
     criticality,
     role,
     expected_wasm_hash: expectedWasmHash,
+    audit_status: auditStatus,
+    deployed_at: deployedAt,
+    deployed_ledger: deployedLedger,
+    upgradeable,
+    reputation_score: reputationScore,
   };
+}
+
+function readOptionalBoolean(value: unknown, path: string, details: string[]): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') {
+    details.push(`${path} must be a boolean.`);
+    return undefined;
+  }
+  return value;
+}
+
+function readOptionalReputation(value: unknown, path: string, details: string[]): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || Number.isNaN(value) || value < 0 || value > 100) {
+    details.push(`${path} must be a number between 0 and 100.`);
+    return undefined;
+  }
+  return value;
 }
 
 function readOptionalWasmHash(value: unknown, path: string, details: string[]): string | undefined {

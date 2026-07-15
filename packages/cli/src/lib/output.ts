@@ -209,6 +209,37 @@ export function printAnalysis(response: AnalyzeResponse): void {
   printTrace(response.trace);
   printField(response.field);
   printGravity(response.gravity);
+  printExecutionGraph(response);
+
+  if (response.path_expectation) {
+    section('PATH EXPECTATION');
+    field('matched_fully', response.path_expectation.matched_fully ? pc.green('true') : pc.red('false'));
+    if (response.path_expectation.missing.length > 0) {
+      field(
+        'missing',
+        response.path_expectation.missing
+          .map((step) => `${step.contract_id}${step.function_name ? `.${step.function_name}` : ''}`)
+          .join(', '),
+      );
+    }
+    if (response.path_expectation.unexpected.length > 0) {
+      field(
+        'unexpected',
+        response.path_expectation.unexpected
+          .map((step) => `${step.contract_id}${step.function_name ? `.${step.function_name}` : ''}`)
+          .join(', '),
+      );
+    }
+  }
+
+  if (response.state_changes.value_diffs && response.state_changes.value_diffs.length > 0) {
+    section('STATE VALUE DIFFS');
+    for (const diff of response.state_changes.value_diffs.slice(0, 8)) {
+      console.log(
+        `  - ${diff.contract_id ?? 'unknown'} key=${diff.ledger_key.slice(0, 16)}… before=${diff.before ?? '∅'} after=${diff.after ?? '∅'}`,
+      );
+    }
+  }
 
   section('EXPLAINABILITY');
   field('operations', response.explainability.operations.length);

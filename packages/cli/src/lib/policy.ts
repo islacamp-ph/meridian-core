@@ -9,6 +9,10 @@ const POLICY_RULE_TYPES = new Set([
   'ttl_critical',
   'upgrade_risk',
   'min_confidence',
+  'max_slippage',
+  'max_amount',
+  'require_approval',
+  'untrusted_counterparty',
 ]);
 
 const POLICY_EFFECTS = new Set(['ABORT', 'WARN', 'ALLOW']);
