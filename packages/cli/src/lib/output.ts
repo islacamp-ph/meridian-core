@@ -364,7 +364,84 @@ export function printDiff(response: AnalyzeDiffResponse): void {
     }
   }
 
+  if (
+    response.diff.token_movements_added.length > 0
+    || response.diff.token_movements_removed.length > 0
+  ) {
+    section('TOKEN MOVEMENTS');
+    for (const movement of response.diff.token_movements_added) {
+      console.log(`  ${pc.red('+')} ${movement.description}`);
+    }
+    for (const movement of response.diff.token_movements_removed) {
+      console.log(`  ${pc.green('-')} ${movement.description}`);
+    }
+  }
+
+  if (response.diff.path_delta.added.length > 0 || response.diff.path_delta.removed.length > 0) {
+    section('PATH DELTA');
+    if (response.diff.path_delta.added.length > 0) {
+      field(
+        'added',
+        response.diff.path_delta.added
+          .map((step) => `${step.contract_id}${step.function_name ? `.${step.function_name}` : ''}`)
+          .join(', '),
+      );
+    }
+    if (response.diff.path_delta.removed.length > 0) {
+      field(
+        'removed',
+        response.diff.path_delta.removed
+          .map((step) => `${step.contract_id}${step.function_name ? `.${step.function_name}` : ''}`)
+          .join(', '),
+      );
+    }
+  }
+
+  if (response.diff.contract_versions.length > 0) {
+    section('CONTRACT VERSIONS');
+    for (const version of response.diff.contract_versions) {
+      const mark = version.drift ? pc.yellow('DRIFT') : pc.green('OK');
+      console.log(
+        `  - [${mark}] ${version.name ?? version.contract_id}: expected=${version.expected_wasm_hash?.slice(0, 12) ?? '∅'}… observed=${version.on_chain_wasm_hash?.slice(0, 12) ?? '∅'}…`,
+      );
+    }
+  }
+
   console.log('');
+}
+
+function printExecutionGraph(response: AnalyzeResponse): void {
+  const graph = response.execution_graph;
+  section('EXECUTION GRAPH');
+  field('roots', graph.root_contracts.join(', ') || 'none');
+  field('downstream', graph.downstream_contracts.join(', ') || 'none');
+  field('auth', graph.auth_dependencies.join(', ') || 'none');
+
+  if (graph.token_movements.length > 0) {
+    console.log(`  ${pc.dim('token_movements')}:`);
+    for (const movement of graph.token_movements.slice(0, 8)) {
+      const bits = [
+        movement.source ?? 'heuristic',
+        movement.amount ? `amount=${movement.amount}` : undefined,
+        movement.from ? `from=${movement.from}` : undefined,
+        movement.to ? `to=${movement.to}` : undefined,
+      ].filter(Boolean);
+      console.log(`    - ${movement.description} ${pc.dim(`(${bits.join(', ')})`)}`);
+    }
+  }
+
+  const interesting = graph.edges.filter((edge) =>
+    edge.type === 'invoke' || edge.type === 'downstream' || edge.type === 'auth' || edge.type === 'token'
+  );
+  if (interesting.length > 0) {
+    console.log(`  ${pc.dim('touch_map')}:`);
+    for (const edge of interesting.slice(0, 16)) {
+      console.log(`    ${edge.from} -[${edge.type}${edge.label ? `:${edge.label}` : ''}]→ ${edge.to}`);
+    }
+    if (interesting.length > 16) {
+      console.log(`    ${pc.dim(`… ${interesting.length - 16} more edges`)}`);
+    }
+  }
 }
 
 export function printBatchAnalysis(response: BatchAnalyzeResponse): void {
