@@ -1,11 +1,18 @@
 import { analyze, MERIDIAN_VERSION } from './analyze.js';
+import {
+  buildContractVersionDiffs,
+  buildEnrichedDiffSummary,
+  compareInvokePaths,
+  compareTokenMovements,
+  compareValueDiffs,
+  extractInvokePath,
+} from './path.js';
 import type {
   AnalyzeDiffRequest,
   AnalyzeDiffResponse,
   EcosystemManifest,
   ExecutionDiff,
   MeridianError,
-  RiskItem,
   StructuredAnalyzeResponse,
 } from './types.js';
 
@@ -48,7 +55,7 @@ export async function analyzeDiff(
 export function compareAnalyzeResults(
   a: StructuredAnalyzeResponse,
   b: StructuredAnalyzeResponse,
-  _manifest?: EcosystemManifest,
+  manifest?: EcosystemManifest,
 ): ExecutionDiff {
   const contractsA = contractSet(a);
   const contractsB = contractSet(b);
@@ -68,18 +75,36 @@ export function compareAnalyzeResults(
   const risksAdded = [...risksB.values()].filter((r) => !risksA.has(r.id));
   const risksRemoved = [...risksA.values()].filter((r) => !risksB.has(r.id));
 
+  const tokens = compareTokenMovements(
+    a.execution_graph.token_movements,
+    b.execution_graph.token_movements,
+  );
+  const pathDelta = compareInvokePaths(extractInvokePath(a), extractInvokePath(b));
+  const valueDiffs = compareValueDiffs(a.state_changes.value_diffs, b.state_changes.value_diffs);
+  const touched = new Set([...contractsA, ...contractsB]);
+  const contractVersions = [
+    ...buildContractVersionDiffs(a.field, manifest, touched),
+    ...buildContractVersionDiffs(b.field, manifest, touched),
+  ].filter((entry, index, all) =>
+    all.findIndex((other) => other.contract_id === entry.contract_id) === index
+  );
+
   const blastDelta = Math.round((b.gravity.blast_radius - a.gravity.blast_radius) * 100) / 100;
   const verdictChanged = a.verdict !== b.verdict;
   const decisionChanged = a.decision.action !== b.decision.action;
+  const pathChanged = pathDelta.added.length > 0 || pathDelta.removed.length > 0;
 
   return {
-    summary: buildDiffSummary({
+    summary: buildEnrichedDiffSummary({
       verdictChanged,
       decisionChanged,
       blastDelta,
       contractsAdded,
       contractsRemoved,
       risksAdded,
+      tokensAdded: tokens.added.length,
+      pathChanged,
+      versionDrift: contractVersions.filter((v) => v.drift).length,
     }),
     verdict_changed: verdictChanged,
     decision_changed: decisionChanged,
@@ -92,6 +117,14 @@ export function compareAnalyzeResults(
     writes_removed: writesRemoved,
     risks_added: risksAdded,
     risks_removed: risksRemoved,
+    token_movements_added: tokens.added,
+    token_movements_removed: tokens.removed,
+    path_delta: pathDelta,
+    contract_versions: contractVersions,
+    path_expectation_a: a.path_expectation,
+    path_expectation_b: b.path_expectation,
+    value_diffs_added: valueDiffs.added,
+    value_diffs_removed: valueDiffs.removed,
   };
 }
 
@@ -101,34 +134,4 @@ function contractSet(result: StructuredAnalyzeResponse): Set<string> {
     ...result.execution_graph.downstream_contracts,
     ...result.field.dependency_graph.map((n) => n.address),
   ]);
-}
-
-function buildDiffSummary(input: {
-  verdictChanged: boolean;
-  decisionChanged: boolean;
-  blastDelta: number;
-  contractsAdded: string[];
-  contractsRemoved: string[];
-  risksAdded: RiskItem[];
-}): string {
-  const parts: string[] = [];
-
-  if (input.verdictChanged) parts.push('Verdict changed between A and B.');
-  if (input.decisionChanged) parts.push('Submit decision changed between A and B.');
-  if (input.blastDelta !== 0) {
-    parts.push(`Blast radius delta: ${input.blastDelta > 0 ? '+' : ''}${input.blastDelta}.`);
-  }
-  if (input.contractsAdded.length > 0) {
-    parts.push(`Added ${input.contractsAdded.length} contract touch(es).`);
-  }
-  if (input.contractsRemoved.length > 0) {
-    parts.push(`Removed ${input.contractsRemoved.length} contract touch(es).`);
-  }
-  if (input.risksAdded.length > 0) {
-    parts.push(`Introduced ${input.risksAdded.length} new risk(s): ${input.risksAdded[0].title}.`);
-  }
-
-  return parts.length > 0
-    ? parts.join(' ')
-    : 'No material execution or risk differences detected between A and B.';
 }

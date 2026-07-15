@@ -2,7 +2,8 @@ import { createRequire } from 'node:module';
 import { buildDecision, collectTopRisks } from './decision.js';
 import { buildExplainabilityReport } from './explainability.js';
 import { buildFieldGraph } from './field/index.js';
-import { buildExecutionGraph, buildStateChangeSummary } from './graph.js';
+import { buildExecutionGraph, buildStateChangeSummary, collectTokenMovements } from './graph.js';
+import { evaluatePathExpectation, extractInvokePath } from './path.js';
 import { scoreGravity } from './gravity/index.js';
 import { logger } from './logger.js';
 import { evaluatePolicy } from './policy.js';
@@ -376,6 +377,7 @@ export async function analyze(
         gravity: gravityResult,
         confidence,
         manifest: request.ecosystem,
+        token_movements: collectTokenMovements(traceResult),
       })
     : undefined;
 
@@ -409,6 +411,23 @@ export async function analyze(
 
   const executionGraph = buildExecutionGraph(traceResult, fieldResult, request.ecosystem);
   const stateChanges = buildStateChangeSummary(traceResult, fieldResult);
+  const pathExpectation = request.options?.expected_path?.length
+    ? evaluatePathExpectation(
+        request.options.expected_path,
+        traceResult.execution_path
+          .filter((step) => step.type === 'invoke' && step.contract_id)
+          .map((step) => ({
+            contract_id: step.contract_id!,
+            function_name: step.function_name,
+          })),
+      )
+    : undefined;
+
+  if (pathExpectation && !pathExpectation.matched_fully) {
+    warnings.push(
+      `Expected path mismatch: ${pathExpectation.missing.length} missing, ${pathExpectation.unexpected.length} unexpected invoke(s)`,
+    );
+  }
 
   const knownContracts = new Set(request.ecosystem?.contracts.map((c) => c.address) ?? []);
   const unknownContracts = request.ecosystem
@@ -451,6 +470,7 @@ export async function analyze(
     execution_graph: executionGraph,
     state_changes: stateChanges,
     top_risks: topRisks,
+    path_expectation: pathExpectation,
     trace: traceResult,
     field: fieldResult,
     gravity: gravityResult,

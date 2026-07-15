@@ -78,6 +78,9 @@ export function scoreGravity(
       ttlCritical: ttlCritical.has(node.address),
       ttlWarning: ttlWarning.has(node.address),
       slippageSensitive: slippageSensitive.has(node.address),
+      auditStatus: manifestEntry?.audit_status,
+      upgradeableFlag: manifestEntry?.upgradeable === true,
+      reputationScore: manifestEntry?.reputation_score,
     });
 
     return {
@@ -118,8 +121,24 @@ export function scoreGravity(
 
 function buildManifestLookup(
   manifest?: EcosystemManifest,
-): Map<string, { name: string; active_users?: number; criticality?: 'HIGH' | 'MEDIUM' | 'LOW'; role?: string }> {
-  const lookup = new Map<string, { name: string; active_users?: number; criticality?: 'HIGH' | 'MEDIUM' | 'LOW'; role?: string }>();
+): Map<string, {
+  name: string;
+  active_users?: number;
+  criticality?: 'HIGH' | 'MEDIUM' | 'LOW';
+  role?: string;
+  audit_status?: 'audited' | 'unaudited' | 'unknown';
+  upgradeable?: boolean;
+  reputation_score?: number;
+}> {
+  const lookup = new Map<string, {
+    name: string;
+    active_users?: number;
+    criticality?: 'HIGH' | 'MEDIUM' | 'LOW';
+    role?: string;
+    audit_status?: 'audited' | 'unaudited' | 'unknown';
+    upgradeable?: boolean;
+    reputation_score?: number;
+  }>();
   if (!manifest) return lookup;
   for (const contract of manifest.contracts) {
     lookup.set(contract.address, {
@@ -127,6 +146,9 @@ function buildManifestLookup(
       active_users: contract.active_users,
       criticality: contract.criticality,
       role: contract.role,
+      audit_status: contract.audit_status,
+      upgradeable: contract.upgradeable,
+      reputation_score: contract.reputation_score,
     });
   }
   return lookup;
@@ -155,6 +177,9 @@ function scoreContract(input: {
   ttlCritical: boolean;
   ttlWarning: boolean;
   slippageSensitive: boolean;
+  auditStatus?: 'audited' | 'unaudited' | 'unknown';
+  upgradeableFlag: boolean;
+  reputationScore?: number;
 }): GravityContractScoreBreakdown {
   const factors: GravityFactor[] = [];
 
@@ -326,6 +351,38 @@ function scoreContract(input: {
     input.slippageSensitive
       ? 'Execution path includes swap/transfer semantics sensitive to price movement.'
       : 'No slippage-sensitive path detected.',
+  );
+
+  const unaudited = input.auditStatus === 'unaudited' || input.auditStatus === 'unknown';
+  pushFactor(
+    factors,
+    'unaudited_counterparty',
+    'Unaudited / unknown audit status',
+    unaudited ? 10 : 0,
+    unaudited
+      ? `Manifest audit_status is ${input.auditStatus}.`
+      : 'Counterparty audit status is audited or unset.',
+  );
+
+  pushFactor(
+    factors,
+    'upgradeable_flag',
+    'Upgradeable contract flag',
+    input.upgradeableFlag ? 8 : 0,
+    input.upgradeableFlag
+      ? 'Manifest marks this contract as upgradeable.'
+      : 'Contract is not flagged upgradeable in the manifest.',
+  );
+
+  const lowReputation = input.reputationScore !== undefined && input.reputationScore < 50;
+  pushFactor(
+    factors,
+    'low_reputation',
+    'Low reputation score',
+    lowReputation ? Math.max(4, Math.round((50 - (input.reputationScore ?? 50)) / 5)) : 0,
+    lowReputation
+      ? `Manifest reputation_score ${input.reputationScore} is below 50.`
+      : 'No low-reputation signal.',
   );
 
   const total = Math.round(factors.reduce((sum, factor) => sum + factor.weight, 0) * 100) / 100;
