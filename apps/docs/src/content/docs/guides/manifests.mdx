@@ -38,6 +38,14 @@ An ecosystem manifest is a JSON file describing known contracts in your deployme
 | `contracts[].active_users` | No | Estimated active users (for blast radius) |
 | `contracts[].criticality` | No | `HIGH`, `MEDIUM`, or `LOW` |
 | `contracts[].role` | No | Free-text role description |
+| `contracts[].expected_wasm_hash` | No | 64-char hex SHA-256 of expected Wasm (upgrade drift) |
+| `contracts[].audit_status` | No | `audited`, `unaudited`, or `unknown` |
+| `contracts[].deployed_at` | No | ISO-8601 deployment date |
+| `contracts[].deployed_ledger` | No | First-seen / deployment ledger |
+| `contracts[].upgradeable` | No | Whether bytecode can be upgraded |
+| `contracts[].reputation_score` | No | Manifest reputation 0–100 |
+
+Counterparty fields feed GRAVITY (unaudited / upgradeable / low reputation factors), execution-graph node metadata, and the `untrusted_counterparty` policy rule. There is no external reputation oracle — scores are manifesto-supplied.
 
 ## Community library
 

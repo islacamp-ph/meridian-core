@@ -1,0 +1,65 @@
+---
+title: Decision and Policy
+description: Pre-submit decision gateway and deterministic policy rule catalog
+---
+
+MERIDIAN is a **pre-execution risk gateway**. After TRACE → FIELD → GRAVITY, analysis returns:
+
+- `decision.action`: `submit` | `hold` | `rewrite`
+- `top_risks`: ranked why-it-matters items
+- `policy` (optional): deterministic rule evaluation when `options.policy_rules` are supplied
+
+## Policy rules
+
+| Type | Default effect | When it fires |
+|---|---|---|
+| `unknown_contract` | ABORT | Touched contract not in the ecosystem manifesto |
+| `allowlist_only` | ABORT | Touched contract not in `allowlist` |
+| `admin_auth_path` | WARN | Admin/upgrade/owner auth or privileged function |
+| `max_blast_radius` | ABORT | `blast_radius >= threshold` (default 50) |
+| `require_approval` | WARN | `blast_radius >= threshold` (default 40) — human gate |
+| `ttl_critical` | ABORT | Critical TTL / archival warnings |
+| `upgrade_risk` | WARN | On-chain WASM ≠ `expected_wasm_hash` |
+| `min_confidence` | WARN | Confidence below `min_confidence` / `threshold` |
+| `max_slippage` | WARN | Slippage-sensitive swap path detected (`threshold` reserved for decoded bps) |
+| `max_amount` | ABORT | Parsed token movement amount ≥ `threshold` |
+| `untrusted_counterparty` | WARN | Manifest `audit_status` unaudited/unknown, `upgradeable`, or low `reputation_score` |
+
+Example policy file:
+
+```json
+{
+  "rules": [
+    { "type": "unknown_contract" },
+    { "type": "require_approval", "threshold": 35 },
+    { "type": "max_amount", "threshold": 1000000000, "effect": "ABORT" },
+    { "type": "untrusted_counterparty", "threshold": 60 }
+  ]
+}
+```
+
+```bash
+meridian analyze --file tx.xdr --policy policy.json --network testnet
+```
+
+## Expected path
+
+Pass `options.expected_path` to assert the invoke sequence:
+
+```json
+{
+  "expected_path": [
+    { "contract_id": "CA…", "function_name": "swap" }
+  ]
+}
+```
+
+Response includes `path_expectation` with `matched`, `missing`, and `unexpected`.
+
+## A/B diff
+
+`POST /v1/analyze/diff` and `meridian diff` compare two XDRs for safest-rewrite workflows: verdict/decision change, blast delta, contract/auth/write/risk/token/path deltas, and contract version drift.
+
+## Token amounts
+
+Classic payments parse amounts heuristically today. When simulation diagnostics include transfer events, TRACE attaches `token_events` with `source: "decoded"` and the graph prefers those over heuristics.
