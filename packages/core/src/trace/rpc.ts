@@ -26,6 +26,14 @@ export interface RawSimulationResult {
   sorobanData?: SorobanDataBuilder;
   /** Memory bytes from simulation cost (memBytes), when reported by RPC. */
   memoryBytes?: number;
+  /** Simulation result XDRs / auth trees retained for decode (Phase B). */
+  results?: Array<{ auth?: string[]; xdr?: string }>;
+}
+
+export interface LedgerEntryValue {
+  ledger_key: string;
+  value_xdr?: string;
+  live_until_ledger_seq?: number;
 }
 
 export interface SimulateTransactionOptions {
@@ -172,8 +180,13 @@ function parseRawSimulation(raw: RawSimulateRpcResponse): {
   minResourceFee: string;
   events: xdr.DiagnosticEvent[];
   memoryBytes?: number;
+  results?: Array<{ auth?: string[]; xdr?: string }>;
 } {
   const events = (raw.events ?? []).map((evt) => xdr.DiagnosticEvent.fromXDR(evt, 'base64'));
+  const results = raw.results?.map((entry) => ({
+    auth: entry.auth,
+    xdr: entry.xdr,
+  }));
 
   if (typeof raw.error === 'string') {
     return {
@@ -181,6 +194,7 @@ function parseRawSimulation(raw: RawSimulateRpcResponse): {
       error: raw.error,
       minResourceFee: '0',
       events,
+      results,
     };
   }
 
@@ -194,6 +208,7 @@ function parseRawSimulation(raw: RawSimulateRpcResponse): {
     sorobanData: raw.transactionData
       ? new SorobanDataBuilder(raw.transactionData)
       : undefined,
+    results,
   };
 }
 
@@ -259,6 +274,7 @@ export async function simulateTransaction(
         events: parsed.events,
         rpcMetrics,
         error: parsed.error,
+        results: parsed.results,
       };
     }
 
@@ -271,6 +287,7 @@ export async function simulateTransaction(
       rpcMetrics,
       sorobanData: parsed.sorobanData,
       memoryBytes: parsed.memoryBytes,
+      results: parsed.results,
     };
   } catch (err) {
     logger.error('simulateTransaction:failed', {
@@ -327,6 +344,49 @@ export async function fetchLedgerEntryTTLs(
       results.push(...batchResults);
     } catch (err) {
       logger.warn('fetchLedgerEntryTTLs:batch_failed', {
+        batchIndex: Math.floor(offset / LEDGER_ENTRY_BATCH_SIZE),
+        batchSize: batch.length,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Fetch current on-chain ledger entry values (XDR) for footprint keys.
+ * Used as the "before" side of simulated state diffs.
+ */
+export async function fetchLedgerEntryValues(
+  rpcUrl: string,
+  ledgerKeys: string[],
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<LedgerEntryValue[]> {
+  if (ledgerKeys.length === 0) return [];
+
+  const server = createRpcServer(rpcUrl);
+  const uniqueKeys = [...new Set(ledgerKeys)];
+  const results: LedgerEntryValue[] = [];
+
+  for (let offset = 0; offset < uniqueKeys.length; offset += LEDGER_ENTRY_BATCH_SIZE) {
+    const batch = uniqueKeys.slice(offset, offset + LEDGER_ENTRY_BATCH_SIZE);
+    try {
+      const keys = batch.map((key) => xdr.LedgerKey.fromXDR(key, 'base64'));
+      const response = await withTimeout(
+        server.getLedgerEntries(...keys),
+        timeoutMs,
+        'getLedgerEntries',
+      );
+      for (const entry of response.entries) {
+        results.push({
+          ledger_key: entry.key.toXDR('base64'),
+          value_xdr: entry.val.toXDR('base64'),
+          live_until_ledger_seq: entry.liveUntilLedgerSeq,
+        });
+      }
+    } catch (err) {
+      logger.warn('fetchLedgerEntryValues:batch_failed', {
         batchIndex: Math.floor(offset / LEDGER_ENTRY_BATCH_SIZE),
         batchSize: batch.length,
         error: err instanceof Error ? err.message : String(err),
