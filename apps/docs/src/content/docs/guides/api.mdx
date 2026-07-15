@@ -33,7 +33,10 @@ description: HTTP endpoints for MERIDIAN analysis
         "name": "vault",
         "address": "C…",
         "network": "testnet",
-        "expected_wasm_hash": "<64-char hex SHA-256>"
+        "expected_wasm_hash": "<64-char hex SHA-256>",
+        "audit_status": "audited",
+        "upgradeable": false,
+        "reputation_score": 85
       }
     ]
   },
@@ -42,8 +45,12 @@ description: HTTP endpoints for MERIDIAN analysis
     "field_auth_mode": "record",
     "deep_discovery": false,
     "confidence_threshold": 0.75,
+    "expected_path": [{ "contract_id": "C…", "function_name": "deposit" }],
     "policy_rules": [
       { "type": "unknown_contract", "effect": "ABORT" },
+      { "type": "require_approval", "threshold": 40 },
+      { "type": "max_amount", "threshold": 1000000000 },
+      { "type": "untrusted_counterparty", "threshold": 50 },
       { "type": "upgrade_risk", "effect": "WARN" },
       { "type": "max_blast_radius", "threshold": 50, "effect": "ABORT" }
     ]
@@ -60,6 +67,9 @@ description: HTTP endpoints for MERIDIAN analysis
 | `decision.reason` | Why that action was chosen |
 | `top_risks` | Up to 3 ranked risks (also on `decision.top_risks`) |
 | `policy` | Present when `options.policy_rules` were supplied |
+| `path_expectation` | Present when `options.expected_path` was supplied |
+| `execution_graph` | Contract-touch map (invoke/auth/token edges; token `source` is classic/heuristic/decoded) |
+| `state_changes.value_diffs` | Best-effort before/after ledger surfaces when RPC values are available |
 
 ## Diff request
 
@@ -74,7 +84,7 @@ description: HTTP endpoints for MERIDIAN analysis
 }
 ```
 
-Returns `a`, `b`, and a `diff` summarizing verdict/decision changes, blast-radius delta, and contract/auth/write/risk adds/removes.
+Returns `a`, `b`, and a `diff` summarizing verdict/decision changes, blast-radius delta, contract/auth/write/risk/token/path deltas, and contract version drift.
 
 ## Authentication
 
