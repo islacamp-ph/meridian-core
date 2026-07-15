@@ -31,7 +31,15 @@ export type PolicyRuleType =
   | 'allowlist_only'
   | 'ttl_critical'
   | 'upgrade_risk'
-  | 'min_confidence';
+  | 'min_confidence'
+  | 'max_slippage'
+  | 'max_amount'
+  | 'require_approval'
+  | 'untrusted_counterparty';
+
+export type AuditStatus = 'audited' | 'unaudited' | 'unknown';
+
+export type TokenMovementSource = 'heuristic' | 'decoded' | 'classic';
 
 export type PolicyEffect = 'ABORT' | 'WARN' | 'ALLOW';
 
@@ -63,6 +71,8 @@ export interface AnalyzeOptions {
   deep_discovery?: boolean;
   /** Optional deterministic policy rules evaluated after analysis. */
   policy_rules?: PolicyRule[];
+  /** Expected invoke path for path-expectation checks (execution diffs / gate). */
+  expected_path?: ExpectedPathStep[];
 }
 
 export interface AnalyzeResponse {
@@ -78,6 +88,8 @@ export interface AnalyzeResponse {
   state_changes: StateChangeSummary;
   /** Top risks (also mirrored on decision.top_risks). */
   top_risks: RiskItem[];
+  /** Present when options.expected_path was supplied. */
+  path_expectation?: PathExpectation;
   trace: TraceResult;
   field: FieldResult;
   gravity: GravityResult;
@@ -88,6 +100,20 @@ export interface AnalyzeResponse {
   /** Optional policy evaluation when rules are provided on the request. */
   policy?: PolicyResult;
   meta: ResponseMeta;
+}
+
+export interface ExpectedPathStep {
+  contract_id: string;
+  function_name?: string;
+}
+
+export interface PathExpectation {
+  expected: ExpectedPathStep[];
+  actual: ExpectedPathStep[];
+  matched: ExpectedPathStep[];
+  missing: ExpectedPathStep[];
+  unexpected: ExpectedPathStep[];
+  matched_fully: boolean;
 }
 
 export interface Decision {
@@ -114,6 +140,13 @@ export interface ExecutionGraphNode {
   depth?: number;
   source?: DependencyNodeSource;
   upgrade_risk?: boolean;
+  role?: string;
+  criticality?: Criticality;
+  audit_status?: AuditStatus;
+  upgradeable?: boolean;
+  reputation_score?: number;
+  deployed_at?: string;
+  deployed_ledger?: number;
 }
 
 export interface ExecutionGraphEdge {
@@ -122,6 +155,8 @@ export interface ExecutionGraphEdge {
   type: ExecutionGraphEdgeType;
   label?: string;
   step_index?: number;
+  /** Present on token edges: heuristic | decoded | classic. */
+  source?: TokenMovementSource;
 }
 
 export interface ExecutionGraph {
@@ -144,6 +179,15 @@ export interface TokenMovement {
   amount?: string;
   step_index?: number;
   description: string;
+  source?: TokenMovementSource;
+}
+
+export interface LedgerValueDiff {
+  ledger_key: string;
+  contract_id?: string;
+  before?: string;
+  after?: string;
+  description: string;
 }
 
 export interface StateChangeSummary {
@@ -153,6 +197,8 @@ export interface StateChangeSummary {
   irreversible_writes: number;
   contracts_read: string[];
   contracts_written: string[];
+  /** Populated when Phase-B ledger values / decoded writes are available. */
+  value_diffs?: LedgerValueDiff[];
 }
 
 export interface StateSurface {
@@ -206,6 +252,19 @@ export interface AnalyzeDiffResponse {
   diff: ExecutionDiff;
 }
 
+export interface PathDeltaStep {
+  contract_id: string;
+  function_name?: string;
+}
+
+export interface ContractVersionDiff {
+  contract_id: string;
+  name?: string;
+  expected_wasm_hash?: string;
+  on_chain_wasm_hash?: string;
+  drift: boolean;
+}
+
 export interface ExecutionDiff {
   summary: string;
   verdict_changed: boolean;
@@ -219,6 +278,17 @@ export interface ExecutionDiff {
   writes_removed: string[];
   risks_added: RiskItem[];
   risks_removed: RiskItem[];
+  token_movements_added: TokenMovement[];
+  token_movements_removed: TokenMovement[];
+  path_delta: {
+    added: PathDeltaStep[];
+    removed: PathDeltaStep[];
+  };
+  contract_versions: ContractVersionDiff[];
+  path_expectation_a?: PathExpectation;
+  path_expectation_b?: PathExpectation;
+  value_diffs_added: LedgerValueDiff[];
+  value_diffs_removed: LedgerValueDiff[];
 }
 
 export type StructuredAnalyzeResponse = Omit<AnalyzeResponse, 'brief'>;
@@ -233,6 +303,10 @@ export interface TraceResult {
   simulation_context: SimulationContext;
   rpc_metrics?: RpcMetrics;
   staleness_warning?: boolean;
+  /** Decoded SAC/transfer-like events from simulation diagnostics (Phase B). */
+  token_events?: TokenMovement[];
+  /** Simulation return value XDRs when retained from RPC results. */
+  return_values?: string[];
 }
 
 export interface FailurePoint {
@@ -351,7 +425,10 @@ export interface GravityFactor {
     | 'unknown_dependency'
     | 'upgradeable_dependency'
     | 'ttl_archival'
-    | 'slippage_sensitivity';
+    | 'slippage_sensitivity'
+    | 'unaudited_counterparty'
+    | 'upgradeable_flag'
+    | 'low_reputation';
   label: string;
   weight: number;
   applied: boolean;
@@ -473,6 +550,16 @@ export interface ManifestContract {
   role?: string;
   /** Expected on-chain WASM hash (hex) for upgrade-risk detection. */
   expected_wasm_hash?: string;
+  /** Public audit posture for counterparty intelligence. */
+  audit_status?: AuditStatus;
+  /** ISO-8601 deployment date when known. */
+  deployed_at?: string;
+  /** Ledger sequence when the contract was first observed / deployed. */
+  deployed_ledger?: number;
+  /** True when the contract bytecode can be upgraded. */
+  upgradeable?: boolean;
+  /** Manifest-supplied reputation score 0–100. */
+  reputation_score?: number;
 }
 
 export interface LayerTimingMetrics {

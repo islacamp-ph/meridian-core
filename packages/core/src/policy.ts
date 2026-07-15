@@ -1,3 +1,4 @@
+import { collectTokenMovements } from './graph.js';
 import type {
   EcosystemManifest,
   FieldResult,
@@ -6,6 +7,7 @@ import type {
   PolicyResult,
   PolicyRule,
   PolicyViolation,
+  TokenMovement,
   TraceResult,
 } from './types.js';
 
@@ -17,6 +19,10 @@ const DEFAULT_EFFECT: Record<PolicyRule['type'], PolicyEffect> = {
   ttl_critical: 'ABORT',
   upgrade_risk: 'WARN',
   min_confidence: 'WARN',
+  max_slippage: 'WARN',
+  max_amount: 'ABORT',
+  require_approval: 'WARN',
+  untrusted_counterparty: 'WARN',
 };
 
 /**
@@ -30,6 +36,7 @@ export function evaluatePolicy(input: {
   gravity: GravityResult;
   confidence: number;
   manifest?: EcosystemManifest;
+  token_movements?: TokenMovement[];
 }): PolicyResult {
   const violations: PolicyViolation[] = [];
   const known = new Set(input.manifest?.contracts.map((c) => c.address) ?? []);
@@ -38,6 +45,7 @@ export function evaluatePolicy(input: {
     ...input.trace.simulation_context.footprintContracts,
     ...input.trace.execution_path.map((s) => s.contract_id).filter((v): v is string => Boolean(v)),
   ]);
+  const tokenMovements = input.token_movements ?? collectTokenMovements(input.trace);
 
   for (const rule of input.rules) {
     const effect = rule.effect ?? DEFAULT_EFFECT[rule.type];
@@ -94,6 +102,82 @@ export function evaluatePolicy(input: {
         }
         break;
       }
+      case 'require_approval': {
+        const threshold = rule.threshold ?? 40;
+        if (input.gravity.blast_radius >= threshold) {
+          violations.push({
+            rule_type: rule.type,
+            effect,
+            message: rule.label
+              ?? `Blast radius ${input.gravity.blast_radius} requires human approval (threshold ${threshold})`,
+          });
+        }
+        break;
+      }
+      case 'max_slippage': {
+        const slippageContracts = contractsWithSlippage(input.gravity);
+        // threshold reserved for Phase B bps; Phase A fires on any slippage sensitivity.
+        if (slippageContracts.length > 0) {
+          for (const address of slippageContracts) {
+            violations.push({
+              rule_type: rule.type,
+              effect,
+              message: rule.label
+                ?? (rule.threshold !== undefined
+                  ? `Slippage-sensitive path on ${address} (bps threshold ${rule.threshold} reserved for decoded amounts)`
+                  : `Slippage-sensitive swap/transfer path detected on ${address}`),
+              contract_id: address,
+            });
+          }
+        }
+        break;
+      }
+      case 'max_amount': {
+        const threshold = rule.threshold ?? Number.POSITIVE_INFINITY;
+        for (const movement of tokenMovements) {
+          const amount = parseAmountNumber(movement.amount);
+          if (amount !== undefined && amount >= threshold) {
+            violations.push({
+              rule_type: rule.type,
+              effect,
+              message: rule.label
+                ?? `Token movement amount ${movement.amount} exceeds max_amount threshold ${threshold}`,
+              contract_id: movement.to ?? movement.from,
+            });
+          }
+        }
+        break;
+      }
+      case 'untrusted_counterparty': {
+        for (const address of observed) {
+          const contract = input.manifest?.contracts.find((c) => c.address === address);
+          if (!contract) continue;
+          const reasons: string[] = [];
+          if (contract.audit_status === 'unaudited' || contract.audit_status === 'unknown') {
+            reasons.push(`audit_status=${contract.audit_status}`);
+          }
+          if (contract.upgradeable) {
+            reasons.push('upgradeable=true');
+          }
+          const reputationFloor = rule.threshold ?? 50;
+          if (
+            contract.reputation_score !== undefined
+            && contract.reputation_score < reputationFloor
+          ) {
+            reasons.push(`reputation_score=${contract.reputation_score} < ${reputationFloor}`);
+          }
+          if (reasons.length > 0) {
+            violations.push({
+              rule_type: rule.type,
+              effect,
+              message: rule.label
+                ?? `Untrusted counterparty ${address}: ${reasons.join(', ')}`,
+              contract_id: address,
+            });
+          }
+        }
+        break;
+      }
       case 'ttl_critical': {
         for (const warning of input.field.ttl_warnings.filter((w) => w.severity === 'CRITICAL')) {
           violations.push({
@@ -140,6 +224,24 @@ export function evaluatePolicy(input: {
     violations,
     evaluated_rules: input.rules.length,
   };
+}
+
+function contractsWithSlippage(gravity: GravityResult): string[] {
+  const hits = new Set<string>();
+  for (const contract of gravity.affected_contracts) {
+    const applied = contract.score_breakdown.factors.some(
+      (factor) => factor.key === 'slippage_sensitivity' && factor.applied,
+    );
+    if (applied) hits.add(contract.address);
+  }
+  return [...hits];
+}
+
+export function parseAmountNumber(amount?: string): number | undefined {
+  if (!amount) return undefined;
+  const cleaned = amount.replace(/,/g, '').trim();
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function detectAdminAuthPaths(

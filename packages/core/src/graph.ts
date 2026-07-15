@@ -4,6 +4,8 @@ import type {
   ExecutionGraphEdge,
   ExecutionGraphNode,
   FieldResult,
+  LedgerValueDiff,
+  ManifestContract,
   StateChangeSummary,
   StateSurface,
   TokenMovement,
@@ -18,28 +20,37 @@ export function buildExecutionGraph(
   field: FieldResult,
   manifest?: EcosystemManifest,
 ): ExecutionGraph {
-  const nameByAddress = new Map(manifest?.contracts.map((c) => [c.address, c.name]) ?? []);
+  const manifestByAddress = new Map(manifest?.contracts.map((c) => [c.address, c]) ?? []);
   const nodes = new Map<string, ExecutionGraphNode>();
   const edges: ExecutionGraphEdge[] = [];
 
-  function ensureContract(address: string, depth?: number, source?: ExecutionGraphNode['source'], upgradeRisk?: boolean) {
+  function ensureContract(
+    address: string,
+    depth?: number,
+    source?: ExecutionGraphNode['source'],
+    upgradeRisk?: boolean,
+  ) {
+    const manifestEntry = manifestByAddress.get(address);
     if (nodes.has(address)) {
       const existing = nodes.get(address)!;
       if (upgradeRisk) existing.upgrade_risk = true;
       if (depth !== undefined && (existing.depth === undefined || depth < existing.depth)) {
         existing.depth = depth;
       }
+      applyManifestCounterparty(existing, manifestEntry);
       return;
     }
-    nodes.set(address, {
+    const node: ExecutionGraphNode = {
       id: address,
       kind: 'contract',
-      label: nameByAddress.get(address) ?? address,
+      label: buildContractLabel(address, manifestEntry),
       address,
       depth,
       source,
       upgrade_risk: upgradeRisk,
-    });
+    };
+    applyManifestCounterparty(node, manifestEntry);
+    nodes.set(address, node);
   }
 
   for (const node of field.dependency_graph) {
@@ -72,7 +83,6 @@ export function buildExecutionGraph(
       step_index: step.index,
     });
     if (!previousInvoke) {
-      // synthetic root for the envelope-level invoke
       if (!nodes.has(`tx:${step.index}`)) {
         nodes.set(`tx:${step.index}`, {
           id: `tx:${step.index}`,
@@ -84,7 +94,6 @@ export function buildExecutionGraph(
     previousInvoke = contractId;
   }
 
-  // Manifest downstream edges
   for (const node of field.dependency_graph) {
     for (const dep of node.dependencies) {
       ensureContract(dep);
@@ -98,26 +107,49 @@ export function buildExecutionGraph(
   }
 
   const authDependencies: string[] = [];
+  const invokeTargets = invokeSteps.map((s) => s.contract_id!).filter(Boolean);
+
   for (const entry of trace.auth_entries) {
-    const target = entry.contract_id ?? entry.address;
+    const subject = entry.address;
+    const target = entry.contract_id ?? invokeTargets[0] ?? subject;
     if (!target || target === 'unknown') continue;
     authDependencies.push(target);
     ensureContract(target, undefined, 'execution_path');
-    const from = rootContracts[0] ?? target;
-    edges.push({
-      from,
-      to: target,
-      type: 'auth',
-      label: 'require_auth',
-    });
+
+    if (subject && subject !== target) {
+      if (!nodes.has(subject)) {
+        nodes.set(subject, {
+          id: subject,
+          kind: 'account',
+          label: subject,
+          address: subject,
+        });
+      }
+      edges.push({
+        from: subject,
+        to: target,
+        type: 'auth',
+        label: 'require_auth',
+      });
+    } else {
+      for (const invokeTarget of invokeTargets.length > 0 ? invokeTargets : [target]) {
+        edges.push({
+          from: subject || (rootContracts[0] ?? target),
+          to: invokeTarget,
+          type: 'auth',
+          label: 'require_auth',
+        });
+      }
+    }
   }
 
   for (const step of trace.execution_path.filter((s) => s.type === 'auth' && s.contract_id)) {
     const target = step.contract_id!;
     if (!authDependencies.includes(target)) authDependencies.push(target);
     ensureContract(target);
+    const authFrom = rootContracts[0] ?? invokeTargets[0] ?? target;
     edges.push({
-      from: rootContracts[0] ?? target,
+      from: authFrom,
       to: target,
       type: 'auth',
       label: 'auth',
@@ -143,7 +175,7 @@ export function buildExecutionGraph(
     }
   }
 
-  const tokenMovements = detectTokenMovements(trace);
+  const tokenMovements = collectTokenMovements(trace);
   for (const movement of tokenMovements) {
     if (movement.from) {
       nodes.set(`asset-from:${movement.from}`, {
@@ -154,20 +186,49 @@ export function buildExecutionGraph(
       });
     }
     if (movement.to) {
-      nodes.set(`asset-to:${movement.to}`, {
-        id: `asset-to:${movement.to}`,
-        kind: 'account',
-        label: movement.to,
-        address: movement.to,
-      });
+      const toId = movement.to.startsWith('C') ? movement.to : `asset-to:${movement.to}`;
+      if (movement.to.startsWith('C')) {
+        ensureContract(movement.to);
+      } else if (!nodes.has(toId)) {
+        nodes.set(toId, {
+          id: toId,
+          kind: 'account',
+          label: movement.to,
+          address: movement.to,
+        });
+      }
     }
-    if (movement.from && movement.to) {
+    const fromId = movement.from
+      ? (movement.from.startsWith('C') ? movement.from : `asset-from:${movement.from}`)
+      : undefined;
+    const toId = movement.to
+      ? (movement.to.startsWith('C') ? movement.to : `asset-to:${movement.to}`)
+      : undefined;
+    if (fromId && toId) {
       edges.push({
-        from: `asset-from:${movement.from}`,
-        to: `asset-to:${movement.to}`,
+        from: fromId,
+        to: toId,
         type: 'token',
-        label: movement.asset ?? 'asset',
+        label: [
+          movement.asset ?? 'asset',
+          movement.amount ? amountLabel(movement) : undefined,
+          movement.source ?? 'heuristic',
+        ].filter(Boolean).join(' · '),
         step_index: movement.step_index,
+        source: movement.source,
+      });
+    } else if (toId && movement.step_index !== undefined) {
+      edges.push({
+        from: rootContracts[0] ?? `tx:${movement.step_index}`,
+        to: toId,
+        type: 'token',
+        label: [
+          movement.asset ?? 'asset-touch',
+          movement.amount ? amountLabel(movement) : undefined,
+          movement.source ?? 'heuristic',
+        ].filter(Boolean).join(' · '),
+        step_index: movement.step_index,
+        source: movement.source,
       });
     }
   }
@@ -192,9 +253,27 @@ export function buildExecutionGraph(
 }
 
 /**
+ * Collect token movements: prefer decoded TRACE events, else heuristic/classic parse.
+ */
+export function collectTokenMovements(trace: TraceResult): TokenMovement[] {
+  const decoded = (trace.token_events ?? []).map((m) => ({
+    ...m,
+    source: m.source ?? ('decoded' as const),
+  }));
+  if (decoded.length > 0) {
+    return mergeTokenMovements(decoded, detectTokenMovementsHeuristic(trace));
+  }
+  return detectTokenMovementsHeuristic(trace);
+}
+
+/**
  * Summarize ledger state this transaction intends to read/write.
  */
-export function buildStateChangeSummary(trace: TraceResult, field: FieldResult): StateChangeSummary {
+export function buildStateChangeSummary(
+  trace: TraceResult,
+  field: FieldResult,
+  valueDiffs?: LedgerValueDiff[],
+): StateChangeSummary {
   const reads: StateSurface[] = [];
   const writes: StateSurface[] = [];
   const contractsRead = new Set<string>();
@@ -226,7 +305,6 @@ export function buildStateChangeSummary(trace: TraceResult, field: FieldResult):
     });
   }
 
-  // Also count write steps without ledger keys
   for (const step of trace.execution_path) {
     if (step.type === 'write' && step.contract_id) contractsWritten.add(step.contract_id);
     if (step.type === 'read' && step.contract_id) contractsRead.add(step.contract_id);
@@ -242,7 +320,113 @@ export function buildStateChangeSummary(trace: TraceResult, field: FieldResult):
     irreversible_writes: irreversibleWrites,
     contracts_read: [...contractsRead],
     contracts_written: [...contractsWritten],
+    ...(valueDiffs && valueDiffs.length > 0 ? { value_diffs: valueDiffs } : {}),
   };
+}
+
+function buildContractLabel(address: string, manifestEntry?: ManifestContract): string {
+  if (!manifestEntry) return address;
+  const bits = [manifestEntry.name];
+  if (manifestEntry.role) bits.push(manifestEntry.role);
+  if (manifestEntry.criticality) bits.push(manifestEntry.criticality);
+  return bits.join(' · ');
+}
+
+function applyManifestCounterparty(node: ExecutionGraphNode, manifestEntry?: ManifestContract): void {
+  if (!manifestEntry) return;
+  if (manifestEntry.role) node.role = manifestEntry.role;
+  if (manifestEntry.criticality) node.criticality = manifestEntry.criticality;
+  if (manifestEntry.audit_status) node.audit_status = manifestEntry.audit_status;
+  if (manifestEntry.upgradeable !== undefined) node.upgradeable = manifestEntry.upgradeable;
+  if (manifestEntry.reputation_score !== undefined) node.reputation_score = manifestEntry.reputation_score;
+  if (manifestEntry.deployed_at) node.deployed_at = manifestEntry.deployed_at;
+  if (manifestEntry.deployed_ledger !== undefined) node.deployed_ledger = manifestEntry.deployed_ledger;
+  if (!node.label || node.label === node.address) {
+    node.label = buildContractLabel(node.address ?? node.id, manifestEntry);
+  }
+}
+
+function amountLabel(movement: TokenMovement): string {
+  return movement.amount ?? '';
+}
+
+function detectTokenMovementsHeuristic(trace: TraceResult): TokenMovement[] {
+  const movements: TokenMovement[] = [];
+
+  for (const step of trace.execution_path) {
+    const desc = step.description;
+    const descLower = desc.toLowerCase();
+    const fn = step.function_name?.toLowerCase() ?? '';
+
+    if (step.type === 'classic') {
+      const classic = parseClassicPayment(desc);
+      if (classic) {
+        movements.push({
+          step_index: step.index,
+          description: desc,
+          amount: classic.amount,
+          to: classic.to,
+          asset: classic.asset,
+          source: 'classic',
+        });
+        continue;
+      }
+    }
+
+    if (
+      fn.includes('transfer')
+      || fn.includes('payment')
+      || fn.includes('swap')
+      || fn.includes('withdraw')
+      || fn.includes('deposit')
+      || descLower.includes('transfer')
+    ) {
+      movements.push({
+        step_index: step.index,
+        to: step.contract_id,
+        description: desc,
+        asset: fn.includes('swap') ? 'pool-asset' : undefined,
+        source: 'heuristic',
+      });
+    }
+  }
+
+  return movements;
+}
+
+/** Parse classic "Payment: {amount} → {dest}" descriptions. */
+export function parseClassicPayment(description: string): {
+  amount: string;
+  to: string;
+  asset?: string;
+} | undefined {
+  const match = description.match(/^Payment:\s*([^\s→]+)(?:\s+(\S+))?\s*→\s*(\S+)/i)
+    ?? description.match(/^payment:\s*([^\s→]+)(?:\s+(\S+))?\s*→\s*(\S+)/i);
+  if (!match) return undefined;
+  return {
+    amount: match[1],
+    asset: match[2],
+    to: match[3],
+  };
+}
+
+function mergeTokenMovements(preferred: TokenMovement[], fallback: TokenMovement[]): TokenMovement[] {
+  const keys = new Set(preferred.map(tokenKey));
+  const merged = [...preferred];
+  for (const movement of fallback) {
+    if (!keys.has(tokenKey(movement))) merged.push(movement);
+  }
+  return merged;
+}
+
+function tokenKey(movement: TokenMovement): string {
+  return [
+    movement.step_index ?? '',
+    movement.from ?? '',
+    movement.to ?? '',
+    movement.amount ?? '',
+    movement.asset ?? '',
+  ].join('|');
 }
 
 function buildStateSummaryText(
@@ -261,59 +445,21 @@ function buildStateSummaryText(
   ].filter(Boolean).join(' ');
 }
 
-function detectTokenMovements(trace: TraceResult): TokenMovement[] {
-  const movements: TokenMovement[] = [];
-
-  for (const step of trace.execution_path) {
-    const desc = step.description.toLowerCase();
-    const fn = step.function_name?.toLowerCase() ?? '';
-
-    if (step.type === 'classic' && desc.startsWith('payment:')) {
-      movements.push({
-        step_index: step.index,
-        description: step.description,
-      });
-      continue;
-    }
-
-    if (
-      fn.includes('transfer')
-      || fn.includes('payment')
-      || fn.includes('swap')
-      || fn.includes('withdraw')
-      || fn.includes('deposit')
-      || desc.includes('transfer')
-    ) {
-      movements.push({
-        step_index: step.index,
-        to: step.contract_id,
-        description: step.description,
-        asset: fn.includes('swap') ? 'pool-asset' : undefined,
-      });
-    }
-  }
-
-  return movements;
-}
-
 function contractFromLedgerKeyHint(
   key: string,
   field: FieldResult,
   trace: TraceResult,
 ): string | undefined {
-  // Prefer contracts already mapped that appear with this key on execution steps
   for (const step of trace.execution_path) {
     if (step.ledger_keys?.includes(key) && step.contract_id) {
       return step.contract_id;
     }
   }
 
-  // Fall back: if only one footprint contract, attribute to it
   if (trace.simulation_context.footprintContracts.length === 1) {
     return trace.simulation_context.footprintContracts[0];
   }
 
-  // Match against dependency graph contracts present in footprint
   const footprint = new Set(trace.simulation_context.footprintContracts);
   const matches = field.dependency_graph.map((n) => n.address).filter((a) => footprint.has(a));
   return matches.length === 1 ? matches[0] : undefined;
@@ -322,7 +468,7 @@ function contractFromLedgerKeyHint(
 function dedupeEdges(edges: ExecutionGraphEdge[]): ExecutionGraphEdge[] {
   const seen = new Set<string>();
   return edges.filter((edge) => {
-    const key = `${edge.from}->${edge.to}:${edge.type}:${edge.label ?? ''}:${edge.step_index ?? ''}`;
+    const key = `${edge.from}->${edge.to}:${edge.type}:${edge.label ?? ''}:${edge.step_index ?? ''}:${edge.source ?? ''}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
