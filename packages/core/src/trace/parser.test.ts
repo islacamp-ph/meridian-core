@@ -353,6 +353,45 @@ describe('parseSimulationResult', () => {
     expect(result.simulation_context.ledgerSequence).toBe(116);
     expect(result.staleness_warning).toBe(false);
   });
+
+  it('retains return values from simulation results', () => {
+    const result = parseSimulationResult(
+      {
+        success: true,
+        latestLedger: 120,
+        simulationLedger: 120,
+        minResourceFee: '1',
+        events: [],
+        results: [{ xdr: 'AAAA' }],
+        rpcMetrics: {
+          simulate_transaction_ms: 5,
+          get_latest_ledger_ms: 2,
+          latest_ledger_fallback: false,
+          latest_ledger_timed_out: false,
+          timeout_ms: 30000,
+        },
+      },
+      'not-valid-xdr',
+    );
+    expect(result.return_values).toEqual(['AAAA']);
+  });
+});
+
+describe('decodeTokenEventsFromHumanized', () => {
+  it('decodes transfer topics into token movements', () => {
+    const movements = decodeTokenEventsFromHumanized([
+      {
+        contractId: 'CTOKEN',
+        topics: ['transfer', 'GAFROM', 'GBTO'],
+        data: 12345,
+      },
+    ]);
+    expect(movements).toHaveLength(1);
+    expect(movements[0].source).toBe('decoded');
+    expect(movements[0].from).toBe('GAFROM');
+    expect(movements[0].to).toBe('GBTO');
+    expect(movements[0].amount).toBe('12345');
+  });
 });
 
 describe('computeVerdict', () => {

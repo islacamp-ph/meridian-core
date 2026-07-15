@@ -169,5 +169,70 @@ describe('compareAnalyzeResults', () => {
     expect(diff.contracts_added).toContain('CB');
     expect(diff.blast_radius_delta).toBe(45);
     expect(diff.risks_added[0].id).toBe('blast');
+    expect(diff.token_movements_added).toEqual([]);
+    expect(diff.path_delta.added.length).toBeGreaterThanOrEqual(0);
+    expect(diff.contract_versions).toEqual([]);
+  });
+
+  it('diffs token movements and invoke paths', () => {
+    const a = makeResult({
+      execution_graph: {
+        nodes: [],
+        edges: [],
+        root_contracts: ['CA'],
+        downstream_contracts: [],
+        auth_dependencies: [],
+        state_surfaces: { read: [], write: [] },
+        token_movements: [{ description: 'Payment: 1 → G1', amount: '1', source: 'classic' }],
+      },
+      trace: {
+        success: true,
+        execution_path: [
+          { index: 0, type: 'invoke', contract_id: 'CA', function_name: 'a', description: 'a' },
+        ],
+        auth_entries: [],
+        fee_estimate: { classic_base_fee: 100, min_resource_fee: 0, total_fee: 100 },
+        resource_usage: { cpu_instructions: 0, memory_bytes: 0, read_bytes: 0, write_bytes: 0 },
+        simulation_context: {
+          ledgerSequence: 1,
+          latestLedger: 1,
+          footprintContracts: ['CA'],
+          readOnly: [],
+          readWrite: [],
+        },
+      },
+    });
+    const b = makeResult({
+      execution_graph: {
+        nodes: [],
+        edges: [],
+        root_contracts: ['CA'],
+        downstream_contracts: [],
+        auth_dependencies: [],
+        state_surfaces: { read: [], write: [] },
+        token_movements: [{ description: 'Payment: 9 → G9', amount: '9', source: 'classic' }],
+      },
+      trace: {
+        success: true,
+        execution_path: [
+          { index: 0, type: 'invoke', contract_id: 'CA', function_name: 'b', description: 'b' },
+        ],
+        auth_entries: [],
+        fee_estimate: { classic_base_fee: 100, min_resource_fee: 0, total_fee: 100 },
+        resource_usage: { cpu_instructions: 0, memory_bytes: 0, read_bytes: 0, write_bytes: 0 },
+        simulation_context: {
+          ledgerSequence: 1,
+          latestLedger: 1,
+          footprintContracts: ['CA'],
+          readOnly: [],
+          readWrite: [],
+        },
+      },
+    });
+
+    const diff = compareAnalyzeResults(a, b);
+    expect(diff.token_movements_added[0].amount).toBe('9');
+    expect(diff.token_movements_removed[0].amount).toBe('1');
+    expect(diff.path_delta.added.some((s) => s.function_name === 'b')).toBe(true);
   });
 });
