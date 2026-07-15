@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: TRACE, FIELD, GRAVITY, and BRIEF pipeline
+description: TRACE, FIELD, GRAVITY, BRIEF, decision, and policy pipeline
 ---
 
 ```mermaid
@@ -8,7 +8,9 @@ flowchart TD
     A[Transaction XDR] --> B[TRACE]
     B --> C[FIELD]
     C --> D[GRAVITY]
-    D --> E[BRIEF]
+    D --> P[Policy]
+    P --> Dec[Decision]
+    Dec --> E[BRIEF]
     E --> F[Verdict]
 ```
 
@@ -16,7 +18,7 @@ flowchart TD
 
 | Package | Role |
 |---|---|
-| `@meridian/core` | TRACE, FIELD, GRAVITY engines |
+| `@meridian/core` | TRACE, FIELD, GRAVITY, decision, policy, graph, diff |
 | `@meridian/ai` | BRIEF GenAI synthesis |
 | `@meridian/api` | REST API server (Hono) |
 | `meridian-core` | CLI |
@@ -25,10 +27,14 @@ flowchart TD
 
 ## Analysis flow
 
-1. **TRACE** simulates the transaction with `enforce` auth mode and parses the execution path, footprint, and resource usage.
-2. **FIELD** maps contract dependencies via footprint, execution path, manifest BFS, and optional record-mode re-simulation. It fetches TTL metadata via `getLedgerEntries`.
-3. **GRAVITY** scores blast radius using 10 weighted evidence factors and assesses recovery (`FULL`, `PARTIAL`, `NONE`).
-4. **BRIEF** synthesizes a grounded risk briefing via Claude (with deterministic fallback).
+1. **TRACE** simulates the transaction, keeps simulation `results` when present, and may decode transfer-like diagnostic events into `token_events`.
+2. **FIELD** maps contract dependencies via footprint, execution path, manifest BFS, and optional record-mode re-simulation. It fetches TTL metadata and WASM hashes for upgrade drift.
+3. **GRAVITY** scores blast radius using evidence factors (including counterparty audit/upgradeable/reputation when manifesto-supplied) and assesses recovery (`FULL`, `PARTIAL`, `NONE`).
+4. **Policy** (optional) evaluates deterministic rules (`unknown_contract`, `require_approval`, `max_amount`, …).
+5. **Decision** chooses `submit` | `hold` | `rewrite` with top risks.
+6. **BRIEF** synthesizes a grounded risk briefing via Claude (with deterministic fallback).
+
+Execution graphs mark token edges as `classic`, `heuristic`, or `decoded`. Classic payment amounts parse from XDR descriptions; decoded amounts prefer simulation diagnostics when available.
 
 ## Batch analysis
 

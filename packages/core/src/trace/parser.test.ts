@@ -21,6 +21,7 @@ import {
   parseHumanizedDiagnosticEvents,
   parseFailurePoint,
   parseSimulationResult,
+  decodeTokenEventsFromHumanized,
 } from './parser.js';
 import { computeVerdict, computeConfidence, generateFixSequence } from '../analyze.js';
 import type { ExecutionStep } from '../types.js';
