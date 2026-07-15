@@ -17,6 +17,7 @@ import type {
   Network,
   ResourceUsage,
   SimulationContext,
+  TokenMovement,
   TraceResult,
   TTLWarning,
 } from '../types.js';
@@ -698,6 +699,85 @@ export function parseFailurePoint(error: string, executionPath: ExecutionStep[])
 }
 
 /**
+ * Decode SAC/transfer-like movements from simulation diagnostic events.
+ * Prefers structured topic symbols ("transfer") and optional amount in event data.
+ */
+export function decodeTokenEventsFromDiagnostics(events: xdr.DiagnosticEvent[]): TokenMovement[] {
+  if (events.length === 0) return [];
+  return decodeTokenEventsFromHumanized(humanizeEvents(events) as HumanizedDiagnosticEvent[]);
+}
+
+/**
+ * Decode token movements from already-humanized diagnostic events (test-friendly).
+ */
+export function decodeTokenEventsFromHumanized(humanized: HumanizedDiagnosticEvent[]): TokenMovement[] {
+  const movements: TokenMovement[] = [];
+
+  for (const [index, event] of humanized.entries()) {
+    const topics = event.topics.map((topic) => String(topic));
+    const head = topics[0]?.toLowerCase() ?? '';
+    const joined = topics.join(' ').toLowerCase();
+    const isTransfer = head === 'transfer'
+      || joined.includes('transfer')
+      || (typeof event.type === 'string' && event.type.toLowerCase().includes('transfer'));
+
+    if (!isTransfer) continue;
+
+    const addresses = topics
+      .map((topic) => decodeAddressTopic(topic))
+      .filter((value): value is string => Boolean(value));
+    const amount = extractAmountFromData(event.data);
+    const from = addresses[0];
+    const to = addresses[1] ?? event.contractId;
+    const asset = event.contractId;
+
+    movements.push({
+      from,
+      to,
+      asset,
+      amount,
+      step_index: index,
+      description: amount
+        ? `Decoded transfer ${amount}${asset ? ` via ${asset}` : ''}${to ? ` → ${to}` : ''}`
+        : `Decoded transfer${to ? ` → ${to}` : ''}`,
+      source: 'decoded',
+    });
+  }
+
+  return movements;
+}
+
+function decodeAddressTopic(topic: unknown): string | undefined {
+  if (typeof topic === 'string' && (topic.startsWith('C') || topic.startsWith('G'))) {
+    return topic;
+  }
+  return decodeContractTopic(topic);
+}
+
+function extractAmountFromData(data: unknown): string | undefined {
+  if (data === undefined || data === null) return undefined;
+  if (typeof data === 'number' && Number.isFinite(data)) return String(data);
+  if (typeof data === 'bigint') return data.toString();
+  if (typeof data === 'string' && data.trim().length > 0) {
+    const match = data.match(/-?\d+(\.\d+)?/);
+    return match?.[0];
+  }
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const nested = extractAmountFromData(item);
+      if (nested) return nested;
+    }
+  }
+  if (typeof data === 'object') {
+    for (const value of Object.values(data as Record<string, unknown>)) {
+      const nested = extractAmountFromData(value);
+      if (nested) return nested;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Parse raw simulation result into a structured TraceResult.
  *
  * @param raw - Raw simulation result from RPC
@@ -719,6 +799,10 @@ export function parseSimulationResult(
   const executionPath = buildExecutionPath(txXdr, network, raw.events, simulationContext, authEntries);
   const stalenessDelta = raw.latestLedger - raw.simulationLedger;
   const isStale = stalenessDelta > STALENESS_THRESHOLD;
+  const tokenEvents = decodeTokenEventsFromDiagnostics(raw.events);
+  const returnValues = (raw.results ?? [])
+    .map((result) => result.xdr)
+    .filter((value): value is string => Boolean(value));
 
   if (!raw.success && raw.error) {
     return {
@@ -731,6 +815,8 @@ export function parseSimulationResult(
       simulation_context: simulationContext,
       rpc_metrics: raw.rpcMetrics,
       staleness_warning: isStale,
+      ...(tokenEvents.length > 0 ? { token_events: tokenEvents } : {}),
+      ...(returnValues.length > 0 ? { return_values: returnValues } : {}),
     };
   }
 
@@ -743,5 +829,7 @@ export function parseSimulationResult(
     simulation_context: simulationContext,
     rpc_metrics: raw.rpcMetrics,
     staleness_warning: isStale,
+    ...(tokenEvents.length > 0 ? { token_events: tokenEvents } : {}),
+    ...(returnValues.length > 0 ? { return_values: returnValues } : {}),
   };
 }

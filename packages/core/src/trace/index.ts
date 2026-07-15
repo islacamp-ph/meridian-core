@@ -13,12 +13,15 @@ export {
   checkTTLWarnings,
   enrichExecutionPath,
   attachFootprintLedgerKeys,
+  decodeTokenEventsFromDiagnostics,
+  decodeTokenEventsFromHumanized,
 } from './parser.js';
 export { resolveNetworkPassphrase, parseTransactionFromXdr } from './network.js';
 export {
   resolveRpcUrl,
   simulateTransaction,
   fetchLedgerEntryTTLs,
+  fetchLedgerEntryValues,
   fetchContractWasmHash,
 } from './rpc.js';
 

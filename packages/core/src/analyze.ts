@@ -3,7 +3,9 @@ import { buildDecision, collectTopRisks } from './decision.js';
 import { buildExplainabilityReport } from './explainability.js';
 import { buildFieldGraph } from './field/index.js';
 import { buildExecutionGraph, buildStateChangeSummary, collectTokenMovements } from './graph.js';
-import { evaluatePathExpectation, extractInvokePath } from './path.js';
+import { evaluatePathExpectation } from './path.js';
+import { fetchLedgerEntryValues } from './trace/rpc.js';
+import type { LedgerValueDiff } from './types.js';
 import { scoreGravity } from './gravity/index.js';
 import { logger } from './logger.js';
 import { evaluatePolicy } from './policy.js';
@@ -410,7 +412,29 @@ export async function analyze(
   }).slice(0, 3);
 
   const executionGraph = buildExecutionGraph(traceResult, fieldResult, request.ecosystem);
-  const stateChanges = buildStateChangeSummary(traceResult, fieldResult);
+
+  let valueDiffs: LedgerValueDiff[] | undefined;
+  const writeKeys = traceResult.simulation_context.readWrite;
+  if (writeKeys.length > 0 && !request.options?.skip_field) {
+    try {
+      const { resolveRpcUrl } = await import('./trace/rpc.js');
+      const rpcUrl = request.options?.rpc_url ?? resolveRpcUrl(request.network);
+      const entries = await fetchLedgerEntryValues(rpcUrl, writeKeys);
+      if (entries.length > 0) {
+        valueDiffs = entries.map((entry) => ({
+          ledger_key: entry.ledger_key,
+          contract_id: contractFromWriteKey(entry.ledger_key, traceResult, fieldResult),
+          before: entry.value_xdr ? truncateXdr(entry.value_xdr) : undefined,
+          after: '(simulated write)',
+          description: 'On-chain value before submit; after value is produced by simulation write footprint.',
+        }));
+      }
+    } catch {
+      // Best-effort; analysis continues without value diffs.
+    }
+  }
+
+  const stateChanges = buildStateChangeSummary(traceResult, fieldResult, valueDiffs);
   const pathExpectation = request.options?.expected_path?.length
     ? evaluatePathExpectation(
         request.options.expected_path,
@@ -522,6 +546,26 @@ function getConfidenceBucket(confidence: number): ConfidenceBucket {
   if (confidence < 0.5) return 'LOW';
   if (confidence < 0.75) return 'MEDIUM';
   return 'HIGH';
+}
+
+function truncateXdr(value: string, max = 48): string {
+  return value.length <= max ? value : `${value.slice(0, max)}…`;
+}
+
+function contractFromWriteKey(
+  key: string,
+  traceResult: { execution_path: { ledger_keys?: string[]; contract_id?: string }[]; simulation_context: { footprintContracts: string[] } },
+  fieldResult: { dependency_graph: { address: string }[] },
+): string | undefined {
+  for (const step of traceResult.execution_path) {
+    if (step.ledger_keys?.includes(key) && step.contract_id) return step.contract_id;
+  }
+  if (traceResult.simulation_context.footprintContracts.length === 1) {
+    return traceResult.simulation_context.footprintContracts[0];
+  }
+  const footprint = new Set(traceResult.simulation_context.footprintContracts);
+  const matches = fieldResult.dependency_graph.map((n) => n.address).filter((a) => footprint.has(a));
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function emptyFieldResult() {
