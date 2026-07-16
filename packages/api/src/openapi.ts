@@ -339,6 +339,97 @@ export const openApiDocument = {
         },
       },
     },
+    '/v1/screen': {
+      post: {
+        summary: 'Exchange / custodian / treasury / wallet transaction screening',
+        description:
+          'Applies a profile-specific policy pack, runs full analysis, and returns allow | review | block.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                allOf: [
+                  { $ref: '#/components/schemas/AnalyzeRequest' },
+                  {
+                    type: 'object',
+                    required: ['profile'],
+                    properties: {
+                      profile: {
+                        type: 'string',
+                        enum: ['exchange', 'custodian', 'treasury', 'wallet'],
+                      },
+                      allowlist: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Optional contract allowlist for allowlist_only rules',
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Screening disposition + analysis' },
+          '400': { description: 'Invalid request' },
+          '502': { description: 'Analysis layer error' },
+        },
+      },
+    },
+    '/v1/webhooks': {
+      get: {
+        summary: 'List webhook subscriptions',
+        responses: { '200': { description: 'Webhook list' } },
+      },
+      post: {
+        summary: 'Register a treasury / signer approval webhook',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['url'],
+                properties: {
+                  url: { type: 'string' },
+                  events: {
+                    type: 'array',
+                    items: {
+                      type: 'string',
+                      enum: [
+                        'analysis.completed',
+                        'analysis.failed',
+                        'risk.elevated',
+                        'approval.required',
+                        'batch.completed',
+                      ],
+                    },
+                  },
+                  secret: { type: 'string' },
+                  label: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '201': { description: 'Webhook created' },
+          '400': { description: 'Invalid request' },
+        },
+      },
+    },
+    '/v1/webhooks/{id}': {
+      delete: {
+        summary: 'Delete a webhook subscription',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': { description: 'Deleted' },
+          '404': { description: 'Not found' },
+        },
+      },
+    },
   },
 } as const;
 

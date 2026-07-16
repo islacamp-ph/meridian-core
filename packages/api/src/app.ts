@@ -388,7 +388,102 @@ app.post('/v1/analyze', validatedJsonBody('analyzeBody', parseAnalyzeRequest), a
     briefFallbackUsed,
   });
 
+  // Best-effort treasury / signer approval routing
+  void Promise.all(
+    eventsForAnalysis(response).map(({ event, data }) => dispatchWebhookEvent(event, data)),
+  ).catch(() => undefined);
+
   return c.json(response);
+});
+
+/**
+ * POST /v1/screen — exchange / custodian / treasury / wallet screening profile
+ */
+app.post('/v1/screen', validatedJsonBody('screenBody', parseScreenRequest), async (c) => {
+  const body = c.get('screenBody')!;
+  const requestId = c.get('requestId');
+
+  const screenedRequest = mergeScreeningOptions(body.profile, body, body.allowlist);
+  const appliedRules = screenedRequest.options?.policy_rules ?? buildScreeningPolicyRules(body.profile);
+
+  const analysis = await analyze(screenedRequest);
+  if (isMeridianError(analysis)) {
+    recordEndpointError(requestId, '/v1/screen', analysis, 502);
+    void dispatchWebhookEvent('analysis.failed', {
+      profile: body.profile,
+      error: analysis.error,
+      code: analysis.code,
+      network: body.network,
+    });
+    return c.json(analysis, 502);
+  }
+
+  const briefResult = await synthesizeBrief(briefInputFromAnalysis(analysis));
+  const brief = isMeridianError(briefResult)
+    ? 'Screening complete. Review disposition and structured outputs.'
+    : briefResult;
+
+  const full = { ...analysis, brief };
+  const result = toScreeningResult(full, body.profile, appliedRules);
+
+  if (result.disposition !== 'allow') {
+    void dispatchWebhookEvent('approval.required', {
+      profile: body.profile,
+      disposition: result.disposition,
+      decision: result.decision,
+      verdict: result.verdict,
+      blast_radius: result.blast_radius,
+      network: body.network,
+    });
+  }
+  void dispatchWebhookEvent('analysis.completed', {
+    profile: body.profile,
+    disposition: result.disposition,
+    decision: result.decision,
+    verdict: result.verdict,
+    blast_radius: result.blast_radius,
+    network: body.network,
+  });
+
+  return c.json(result);
+});
+
+/**
+ * GET /v1/webhooks — list treasury/signer webhook subscriptions
+ */
+app.get('/v1/webhooks', (c) => {
+  return c.json({ webhooks: listWebhooks() });
+});
+
+/**
+ * POST /v1/webhooks — register a webhook destination for approval routing
+ */
+app.post('/v1/webhooks', validatedJsonBody('webhookBody', parseWebhookRegisterRequest), async (c) => {
+  try {
+    const body = c.get('webhookBody')!;
+    const created = registerWebhook(body);
+    return c.json(created, 201);
+  } catch (err) {
+    return c.json(
+      invalidRequest(
+        err instanceof Error ? err.message : 'Invalid webhook',
+        'Provide an absolute HTTP(S) url and optional events/secret/label.',
+      ),
+      400,
+    );
+  }
+});
+
+/**
+ * DELETE /v1/webhooks/:id — remove a webhook subscription
+ */
+app.delete('/v1/webhooks/:id', (c) => {
+  const id = c.req.param('id');
+  const removed = deleteWebhook(id);
+  if (!removed) {
+    return c.json(invalidRequest('Webhook not found', 'Check the webhook id and try again.'), 404);
+  }
+  return c.json({ deleted: true, id });
 });
 
 /**
