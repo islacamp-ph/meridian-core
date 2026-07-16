@@ -41,6 +41,20 @@ export interface BatchAnalyzeRequest {
   default_network?: Network;
 }
 
+export interface ScreenRequest extends AnalyzeRequest {
+  profile: 'exchange' | 'custodian' | 'treasury' | 'wallet';
+  allowlist?: string[];
+}
+
+export interface WebhookSubscription {
+  id: string;
+  url: string;
+  events: string[];
+  secret?: string;
+  label?: string;
+  created_at: string;
+}
+
 /**
  * HTTP client for the MERIDIAN REST API.
  *
@@ -77,6 +91,28 @@ export class MeridianClient {
 
   async analyzeDiff(request: AnalyzeDiffRequest): Promise<AnalyzeDiffResponse> {
     return this.post('/v1/analyze/diff', request);
+  }
+
+  /** Exchange / custodian / treasury / wallet screening profile. */
+  async screen(request: ScreenRequest): Promise<Record<string, unknown>> {
+    return this.post('/v1/screen', request);
+  }
+
+  async listWebhooks(): Promise<{ webhooks: WebhookSubscription[] }> {
+    return this.get('/v1/webhooks');
+  }
+
+  async registerWebhook(input: {
+    url: string;
+    events?: string[];
+    secret?: string;
+    label?: string;
+  }): Promise<WebhookSubscription> {
+    return this.post('/v1/webhooks', input);
+  }
+
+  async deleteWebhook(id: string): Promise<{ deleted: boolean; id: string }> {
+    return this.delete(`/v1/webhooks/${encodeURIComponent(id)}`);
   }
 
   async trace(request: TraceRequest): Promise<TraceResult> {
@@ -119,6 +155,22 @@ export class MeridianClient {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      return this.parseResponse<T>(response);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async delete<T>(path: string): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const response = await this.fetchFn(`${this.baseUrl}${path}`, {
+        method: 'DELETE',
+        headers: this.headers(),
         signal: controller.signal,
       });
       return this.parseResponse<T>(response);
