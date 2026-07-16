@@ -606,8 +606,46 @@ describe('GET /v1/openapi.json', () => {
     expect(body.openapi).toBe('3.1.0');
     expect(body.paths['/v1/analyze']).toBeDefined();
     expect(body.paths['/v1/analyze/diff']).toBeDefined();
+    expect(body.paths['/v1/screen']).toBeDefined();
+    expect(body.paths['/v1/webhooks']).toBeDefined();
     expect(body.components.schemas.AnalyzeOptions.properties.policy_rules).toBeDefined();
     expect(body.components.schemas.ManifestContract.properties.expected_wasm_hash).toBeDefined();
+  });
+});
+
+describe('POST /v1/webhooks', () => {
+  it('registers and lists webhooks', async () => {
+    const create = await app.request('/v1/webhooks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: 'https://hooks.example.com/meridian',
+        events: ['approval.required'],
+        label: 'treasury',
+      }),
+    });
+    expect(create.status).toBe(201);
+    const created = await create.json();
+    expect(created.id).toBeTruthy();
+
+    const list = await app.request('/v1/webhooks');
+    expect(list.status).toBe(200);
+    const body = await list.json();
+    expect(body.webhooks.some((w: { id: string }) => w.id === created.id)).toBe(true);
+
+    const del = await app.request(`/v1/webhooks/${created.id}`, { method: 'DELETE' });
+    expect(del.status).toBe(200);
+  });
+});
+
+describe('POST /v1/screen', () => {
+  it('returns 400 without profile', async () => {
+    const res = await app.request('/v1/screen', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tx: 'AAAA', network: 'testnet' }),
+    });
+    expect(res.status).toBe(400);
   });
 });
 
