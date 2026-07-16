@@ -27,6 +27,7 @@ export function buildProgram(): Command {
 Examples:
   $ meridian analyze <base64-xdr> --network testnet
   $ meridian analyze --file tx.xdr --policy policy.json --network testnet
+  $ meridian analyze --file tx.xdr --auth-mode enforce --deep-discovery --network testnet
   $ cat tx.xdr | meridian analyze --network mainnet --json
   $ meridian analyze --file txs.json --network testnet
   $ meridian diff --file-a tx-a.xdr --file-b tx-b.xdr --network testnet
