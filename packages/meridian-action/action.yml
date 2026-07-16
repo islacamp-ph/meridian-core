@@ -24,9 +24,9 @@ inputs:
     required: false
     default: ABORT
   fail-on-decision:
-    description: Fail when decision.action is one of these (comma-separated: hold,rewrite). Empty disables.
+    description: Fail when decision.action is one of these (comma-separated: hold,rewrite). Empty disables. Use "hold,rewrite" to require submit.
     required: false
-    default: rewrite
+    default: hold,rewrite
   api-url:
     description: MERIDIAN API base URL (uses CLI locally when unset)
     required: false
@@ -48,6 +48,12 @@ outputs:
   confidence:
     description: Analysis confidence score (0-1)
     value: ${{ steps.analyze.outputs.confidence }}
+  blast-radius:
+    description: GRAVITY blast radius score (0-100)
+    value: ${{ steps.analyze.outputs.blast-radius }}
+  top-risks:
+    description: JSON array of top risks (severity, title, why_it_matters)
+    value: ${{ steps.analyze.outputs.top-risks }}
   brief:
     description: Plain-language risk brief
     value: ${{ steps.analyze.outputs.brief }}
@@ -147,6 +153,8 @@ runs:
         VERDICT=$(echo "${RESULT}" | jq -r '.verdict')
         DECISION=$(echo "${RESULT}" | jq -r '.decision.action // empty')
         CONFIDENCE=$(echo "${RESULT}" | jq -r '.confidence')
+        BLAST_RADIUS=$(echo "${RESULT}" | jq -r '.gravity.blast_radius // empty')
+        TOP_RISKS_JSON=$(echo "${RESULT}" | jq -c '.top_risks // []')
         BRIEF=$(echo "${RESULT}" | jq -r '.brief // empty')
         POLICY_EFFECT=$(echo "${RESULT}" | jq -r '.policy.effect // empty')
         POLICY_PASSED=$(echo "${RESULT}" | jq -r '.policy.passed // empty')
@@ -154,6 +162,12 @@ runs:
         echo "verdict=${VERDICT}" >> "${GITHUB_OUTPUT}"
         echo "decision=${DECISION}" >> "${GITHUB_OUTPUT}"
         echo "confidence=${CONFIDENCE}" >> "${GITHUB_OUTPUT}"
+        echo "blast-radius=${BLAST_RADIUS}" >> "${GITHUB_OUTPUT}"
+        {
+          echo "top-risks<<EOF"
+          echo "${TOP_RISKS_JSON}"
+          echo "EOF"
+        } >> "${GITHUB_OUTPUT}"
         {
           echo "brief<<EOF"
           echo "${BRIEF}"
@@ -167,6 +181,9 @@ runs:
         echo "| Verdict | **${VERDICT}** |" >> "${GITHUB_STEP_SUMMARY}"
         echo "| Decision | **${DECISION}** |" >> "${GITHUB_STEP_SUMMARY}"
         echo "| Confidence | ${CONFIDENCE} |" >> "${GITHUB_STEP_SUMMARY}"
+        if [ -n "${BLAST_RADIUS}" ]; then
+          echo "| Blast radius | ${BLAST_RADIUS} |" >> "${GITHUB_STEP_SUMMARY}"
+        fi
         if [ -n "${POLICY_EFFECT}" ]; then
           echo "| Policy | ${POLICY_PASSED} / ${POLICY_EFFECT} |" >> "${GITHUB_STEP_SUMMARY}"
         fi
