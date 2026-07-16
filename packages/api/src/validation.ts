@@ -26,6 +26,20 @@ export type GravityRequestBody = FieldRequestBody;
 
 export type AnalyzeDiffRequestBody = AnalyzeDiffRequest;
 
+export interface ScreenRequestBody extends AnalyzeRequest {
+  profile: 'exchange' | 'custodian' | 'treasury' | 'wallet';
+  allowlist?: string[];
+}
+
+export interface WebhookRegisterBody {
+  url: string;
+  events?: Array<
+    'analysis.completed' | 'analysis.failed' | 'risk.elevated' | 'approval.required' | 'batch.completed'
+  >;
+  secret?: string;
+  label?: string;
+}
+
 const POLICY_RULE_TYPES = [
   'unknown_contract',
   'admin_auth_path',
@@ -527,6 +541,95 @@ function readOptionalEnum<T extends string>(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function parseScreenRequest(value: unknown): ValidationResult<ScreenRequestBody> {
+  if (!isRecord(value)) {
+    return invalid(
+      'Invalid JSON request body',
+      'Send an object with tx, network, and profile fields.',
+      ['Request body must be a JSON object.'],
+    );
+  }
+
+  const details: string[] = [];
+  const base = parseAnalyzeRequest(value);
+  if (!base.success) return base;
+
+  const profile = readOptionalEnum(
+    value.profile,
+    'profile',
+    ['exchange', 'custodian', 'treasury', 'wallet'] as const,
+    details,
+  );
+  if (value.profile === undefined) {
+    details.push('profile is required.');
+  }
+
+  const allowlist = readOptionalStringArray(value.allowlist, 'allowlist', details);
+
+  if (details.length > 0 || !profile) {
+    return invalid(
+      'Invalid screen request body',
+      'Provide tx, network, and profile (exchange | custodian | treasury | wallet).',
+      details,
+    );
+  }
+
+  return success({
+    ...base.data,
+    profile,
+    ...(allowlist !== undefined ? { allowlist } : {}),
+  });
+}
+
+export function parseWebhookRegisterRequest(value: unknown): ValidationResult<WebhookRegisterBody> {
+  if (!isRecord(value)) {
+    return invalid(
+      'Invalid JSON request body',
+      'Send an object with a url field.',
+      ['Request body must be a JSON object.'],
+    );
+  }
+
+  const details: string[] = [];
+  const url = readRequiredString(value.url, 'url', details);
+  const label = readOptionalString(value.label, 'label', details);
+  const secret = readOptionalString(value.secret, 'secret', details);
+
+  let events: WebhookRegisterBody['events'];
+  if (value.events !== undefined) {
+    if (!Array.isArray(value.events)) {
+      details.push('events must be an array.');
+    } else {
+      const allowed = [
+        'analysis.completed',
+        'analysis.failed',
+        'risk.elevated',
+        'approval.required',
+        'batch.completed',
+      ] as const;
+      const parsed: string[] = [];
+      for (const [index, event] of value.events.entries()) {
+        const item = readOptionalEnum(event, `events[${index}]`, allowed, details);
+        if (item) parsed.push(item);
+      }
+      if (parsed.length > 0) {
+        events = parsed as NonNullable<WebhookRegisterBody['events']>;
+      }
+    }
+  }
+
+  if (details.length > 0 || !url) {
+    return invalid('Invalid webhook registration', 'Provide an absolute HTTP(S) url.', details);
+  }
+
+  return success({
+    url,
+    ...(events !== undefined ? { events } : {}),
+    ...(secret !== undefined ? { secret } : {}),
+    ...(label !== undefined ? { label } : {}),
+  });
 }
 
 function invalid<T>(message: string, hint: string, details: string[]): ValidationResult<T> {

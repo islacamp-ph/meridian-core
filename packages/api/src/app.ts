@@ -40,14 +40,30 @@ import {
   parseBatchAnalyzeRequest,
   parseFieldRequest,
   parseGravityRequest,
+  parseScreenRequest,
   parseTraceRequest,
+  parseWebhookRegisterRequest,
   type AnalyzeDiffRequestBody,
   type BatchAnalyzeRequestBody,
   type FieldRequestBody,
   type GravityRequestBody,
+  type ScreenRequestBody,
   type TraceRequestBody,
   type ValidationResult,
+  type WebhookRegisterBody,
 } from './validation.js';
+import {
+  buildScreeningPolicyRules,
+  mergeScreeningOptions,
+  toScreeningResult,
+} from './screening.js';
+import {
+  deleteWebhook,
+  dispatchWebhookEvent,
+  eventsForAnalysis,
+  listWebhooks,
+  registerWebhook,
+} from './webhooks.js';
 
 type Env = {
   Variables: {
@@ -56,6 +72,8 @@ type Env = {
     analyzeBody?: AnalyzeRequest;
     analyzeDiffBody?: AnalyzeDiffRequestBody;
     batchAnalyzeBody?: BatchAnalyzeRequestBody;
+    screenBody?: ScreenRequestBody;
+    webhookBody?: WebhookRegisterBody;
     traceBody?: TraceRequestBody;
     fieldBody?: FieldRequestBody;
     gravityBody?: GravityRequestBody;
