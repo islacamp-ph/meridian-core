@@ -157,8 +157,9 @@ npm test
 | `--no-brief` | `analyze` | Skip GenAI BRIEF synthesis (structured layers only) |
 | `--api-key <key>` | `analyze` | Anthropic API key for BRIEF synthesis (else read from env) |
 | `--file-a` / `--file-b` | `diff` | Read tx A / tx B XDR from files |
-
-Advanced simulation options (`auth_mode`, `field_auth_mode`, `deep_discovery`) are available via the [REST API](#rest-api) `options` object or when calling `analyze()` from `@meridian/core` directly.
+| `--auth-mode <mode>` | `analyze`, `diff` | TRACE simulation auth (`enforce` \| `record` \| `record_allow_nonroot`) |
+| `--field-auth-mode <mode>` | `analyze`, `diff` | FIELD discovery auth mode |
+| `--deep-discovery` | `analyze`, `diff` | Deep FIELD ecosystem mapping (`record_allow_nonroot`) |
 
 Analyze responses include a **decision gateway** (`submit` | `hold` | `rewrite`) and `top_risks`. Pass `--policy` / `options.policy_rules` for deterministic pre-merge gates. Manifest contracts may set `expected_wasm_hash` for upgrade drift detection.
 
@@ -168,8 +169,8 @@ Analyze responses include a **decision gateway** (`submit` | `hold` | `rewrite`)
 # Full analysis (default command — "analyze" can be omitted)
 meridian analyze <base64-xdr> --network testnet
 
-# Pre-merge policy gates
-meridian analyze --file tx.xdr --policy policy.json --network testnet
+# Pre-merge policy gates + deep discovery
+meridian analyze --file tx.xdr --policy policy.json --auth-mode enforce --deep-discovery --network testnet
 
 # Compare original vs rewrite
 meridian diff --file-a tx-a.xdr --file-b tx-b.xdr --network testnet
@@ -240,6 +241,10 @@ npm run dev --workspace=@meridian/api
 | `POST` | `/v1/analyze` | Full TRACE + FIELD + GRAVITY + BRIEF analysis (decision + optional policy) |
 | `POST` | `/v1/analyze/batch` | Batch TRACE + FIELD + GRAVITY analysis (no BRIEF per item) |
 | `POST` | `/v1/analyze/diff` | Compare tx A vs B (safest rewrite workflow) |
+| `POST` | `/v1/screen` | Exchange / custodian / treasury / wallet screening (`allow` \| `review` \| `block`) |
+| `GET`  | `/v1/webhooks` | List treasury / signer webhook subscriptions |
+| `POST` | `/v1/webhooks` | Register approval-routing webhook |
+| `DELETE` | `/v1/webhooks/:id` | Delete webhook subscription |
 | `POST` | `/v1/trace` | TRACE only |
 | `POST` | `/v1/field` | TRACE + FIELD |
 | `POST` | `/v1/gravity` | TRACE + FIELD + GRAVITY |

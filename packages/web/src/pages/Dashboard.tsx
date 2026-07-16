@@ -58,13 +58,15 @@ const GITHUB_ACTION_SNIPPET = `- name: MERIDIAN pre-execution check
     api-key: \${{ secrets.MERIDIAN_API_KEY }}`;
 
 const WEBHOOK_PAYLOAD_EXAMPLE = `{
-  "event": "analysis.completed",
+  "event": "approval.required",
   "timestamp": "2026-07-08T12:00:00Z",
   "data": {
     "verdict": "WARN",
+    "decision": "hold",
+    "decision_reason": "Blast radius requires human approval",
     "confidence": 0.82,
     "blast_radius": 45,
-    "contracts_mapped": 6,
+    "approval_route": "human_approve",
     "network": "testnet"
   }
 }`;
@@ -457,33 +459,49 @@ export function Dashboard() {
             <section>
               <div className="dashboard-section-head">
                 <h1>Webhooks</h1>
-                <span className="dashboard-badge dashboard-badge-lg">Coming soon</span>
+                <span className="dashboard-badge dashboard-badge-lg">Live</span>
               </div>
               <p className="dashboard-lead">
-                Push MERIDIAN verdicts to your stack — Slack, CI systems, treasury dashboards,
-                and internal monitors. Webhook delivery is not enabled for beta accounts yet.
+                Push MERIDIAN verdicts to Slack, CI, treasury dashboards, and signer approval flows.
+                Register destinations via <code>POST /v1/webhooks</code> (or seed with{' '}
+                <code>MERIDIAN_WEBHOOK_URLS</code>).
               </p>
 
               <div className="dashboard-coming-soon-panel">
-                <h2>Planned events</h2>
+                <h2>Events</h2>
                 <ul className="dashboard-event-list">
-                  <li><code>analysis.completed</code> — verdict, confidence, blast radius</li>
+                  <li><code>analysis.completed</code> — verdict, confidence, blast radius, decision</li>
                   <li><code>analysis.failed</code> — simulation or pipeline errors</li>
+                  <li><code>risk.elevated</code> — WARN or ABORT</li>
+                  <li><code>approval.required</code> — hold / rewrite / policy WARN (treasury routing)</li>
                   <li><code>batch.completed</code> — CI batch summary</li>
-                  <li><code>risk.elevated</code> — WARN or ABORT on monitored patterns</li>
                 </ul>
+
+                <h2>Register</h2>
+                <div className="dashboard-code-toolbar">
+                  <CopyButton text={`curl -X POST $API_BASE/v1/webhooks \\
+  -H "Authorization: Bearer $MERIDIAN_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "url": "https://hooks.example.com/meridian",
+    "events": ["approval.required", "risk.elevated", "analysis.completed"],
+    "label": "treasury-ops"
+  }'`} />
+                </div>
+                <pre className="dashboard-code-block"><code>{`curl -X POST $API_BASE/v1/webhooks \\
+  -H "Authorization: Bearer $MERIDIAN_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "url": "https://hooks.example.com/meridian",
+    "events": ["approval.required", "risk.elevated", "analysis.completed"],
+    "label": "treasury-ops"
+  }'`}</code></pre>
 
                 <h2>Example payload</h2>
                 <div className="dashboard-code-toolbar">
                   <CopyButton text={WEBHOOK_PAYLOAD_EXAMPLE} />
                 </div>
                 <pre className="dashboard-code-block"><code>{WEBHOOK_PAYLOAD_EXAMPLE}</code></pre>
-
-                <p className="dashboard-coming-soon-note">
-                  Want early access?{' '}
-                  <a href={DOCS_URL}>Join the docs waitlist</a> — we&apos;ll notify beta users when
-                  webhooks ship.
-                </p>
               </div>
             </section>
           )}
