@@ -1,5 +1,5 @@
 import { Command, InvalidArgumentError } from 'commander';
-import type { Network } from '../internal/meridian-core.js';
+import type { Network, SimulationAuthMode } from '../internal/meridian-core.js';
 
 /**
  * Parse and validate a --network option value.
@@ -30,6 +30,20 @@ export function parseThreshold(value: string): number {
   return parsed;
 }
 
+const AUTH_MODES = new Set(['enforce', 'record', 'record_allow_nonroot']);
+
+/**
+ * Parse Soroban simulation auth mode.
+ */
+export function parseAuthMode(value: string): SimulationAuthMode {
+  if (!AUTH_MODES.has(value)) {
+    throw new InvalidArgumentError(
+      'Auth mode must be "enforce", "record", or "record_allow_nonroot".',
+    );
+  }
+  return value as SimulationAuthMode;
+}
+
 /**
  * Attach the options shared by every layer command (network, RPC, input, output).
  *
@@ -44,4 +58,25 @@ export function withCommonOptions(command: Command): Command {
     .option('-f, --file <path>', 'Read the transaction XDR from a file instead of an argument')
     .option('-e, --ecosystem <path>', 'Path to an ecosystem manifest JSON file')
     .option('--json', 'Print raw JSON instead of a formatted report');
+}
+
+/**
+ * Attach simulation / discovery options used by analyze and diff.
+ */
+export function withSimulationOptions(command: Command): Command {
+  return command
+    .option(
+      '--auth-mode <mode>',
+      'TRACE simulation auth mode (enforce | record | record_allow_nonroot)',
+      parseAuthMode,
+    )
+    .option(
+      '--field-auth-mode <mode>',
+      'FIELD discovery auth mode (enforce | record | record_allow_nonroot)',
+      parseAuthMode,
+    )
+    .option(
+      '--deep-discovery',
+      'FIELD deep ecosystem mapping (uses record_allow_nonroot when field-auth-mode unset)',
+    );
 }

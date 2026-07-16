@@ -1,12 +1,12 @@
 import { Command } from 'commander';
 import { analyzeDiff } from '../internal/meridian-core.js';
-import type { AnalyzeDiffResponse, Network } from '../internal/meridian-core.js';
+import type { AnalyzeDiffResponse, Network, SimulationAuthMode } from '../internal/meridian-core.js';
 import { resolveTxInput } from '../lib/input.js';
 import { loadManifest } from '../lib/manifest.js';
 import { loadPolicyRules } from '../lib/policy.js';
 import { failWithError, failWithMeridianError, isMeridianError } from '../lib/errors.js';
 import { printDiff, printJson } from '../lib/output.js';
-import { parseNetwork } from '../lib/options.js';
+import { parseNetwork, withSimulationOptions } from '../lib/options.js';
 
 interface DiffCommandOptions {
   network: Network;
@@ -18,13 +18,16 @@ interface DiffCommandOptions {
   json?: boolean;
   skipField?: boolean;
   skipGravity?: boolean;
+  authMode?: SimulationAuthMode;
+  fieldAuthMode?: SimulationAuthMode;
+  deepDiscovery?: boolean;
 }
 
 /**
  * Build the `meridian diff` subcommand — compare tx A vs tx B for safest rewrite.
  */
 export function diffCommand(): Command {
-  return new Command('diff')
+  const command = new Command('diff')
     .description(
       'Compare two transactions (A vs B): verdict, decision, contracts, auth, writes, and risks',
     )
@@ -38,8 +41,10 @@ export function diffCommand(): Command {
     .option('--policy <path>', 'Path to a policy rules JSON file')
     .option('--skip-field', 'Skip the FIELD dependency-mapping layer')
     .option('--skip-gravity', 'Skip the GRAVITY blast-radius layer')
-    .option('--json', 'Print raw JSON instead of a formatted report')
-    .action(async (txAArg: string | undefined, txBArg: string | undefined, options: DiffCommandOptions) => {
+    .option('--json', 'Print raw JSON instead of a formatted report');
+
+  withSimulationOptions(command).action(
+    async (txAArg: string | undefined, txBArg: string | undefined, options: DiffCommandOptions) => {
       try {
         const txA = await resolveTxInput(txAArg, options.fileA);
         const txB = await resolveTxInput(txBArg, options.fileB);
@@ -56,6 +61,9 @@ export function diffCommand(): Command {
             skip_gravity: options.skipGravity,
             rpc_url: options.rpcUrl,
             policy_rules: policyRules,
+            auth_mode: options.authMode,
+            field_auth_mode: options.fieldAuthMode,
+            deep_discovery: options.deepDiscovery,
           },
         });
 
@@ -78,5 +86,8 @@ export function diffCommand(): Command {
       } catch (err) {
         failWithError(err);
       }
-    });
+    },
+  );
+
+  return command;
 }

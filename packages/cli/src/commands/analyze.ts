@@ -1,13 +1,18 @@
 import { Command } from 'commander';
 import { analyze, analyzeBatch } from '../internal/meridian-core.js';
-import type { AnalyzeResponse, BatchAnalyzeResponse, Network } from '../internal/meridian-core.js';
+import type {
+  AnalyzeResponse,
+  BatchAnalyzeResponse,
+  Network,
+  SimulationAuthMode,
+} from '../internal/meridian-core.js';
 import { synthesizeBrief, generateFallbackBrief } from '../internal/meridian-ai.js';
 import { resolveAnalyzeInput } from '../lib/input.js';
 import { loadManifest } from '../lib/manifest.js';
 import { loadPolicyRules } from '../lib/policy.js';
 import { failWithError, failWithMeridianError, isMeridianError } from '../lib/errors.js';
 import { printAnalysis, printBatchAnalysis, printJson } from '../lib/output.js';
-import { parseThreshold, withCommonOptions } from '../lib/options.js';
+import { parseThreshold, withCommonOptions, withSimulationOptions } from '../lib/options.js';
 
 interface AnalyzeCommandOptions {
   network: Network;
@@ -21,6 +26,9 @@ interface AnalyzeCommandOptions {
   confidenceThreshold?: number;
   brief: boolean;
   apiKey?: string;
+  authMode?: SimulationAuthMode;
+  fieldAuthMode?: SimulationAuthMode;
+  deepDiscovery?: boolean;
 }
 
 /**
@@ -33,7 +41,7 @@ export function analyzeCommand(): Command {
     'Run the full MERIDIAN pipeline (TRACE + FIELD + GRAVITY + BRIEF) on a transaction',
   );
 
-  withCommonOptions(command)
+  withSimulationOptions(withCommonOptions(command))
     .option('--skip-field', 'Skip the FIELD dependency-mapping layer')
     .option('--skip-gravity', 'Skip the GRAVITY blast-radius layer')
     .option('--confidence-threshold <n>', 'Minimum confidence required for a CLEAR verdict', parseThreshold)
@@ -52,6 +60,9 @@ export function analyzeCommand(): Command {
           confidence_threshold: options.confidenceThreshold,
           rpc_url: options.rpcUrl,
           policy_rules: policyRules,
+          auth_mode: options.authMode,
+          field_auth_mode: options.fieldAuthMode,
+          deep_discovery: options.deepDiscovery,
         };
 
         if (input.kind === 'batch') {
